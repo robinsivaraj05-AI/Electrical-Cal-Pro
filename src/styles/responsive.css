@@ -1,0 +1,102 @@
+/* ============================================================
+   RESPONSIVE — 1600+ desktop, 1400 laptop, tablet, mobile
+   ============================================================ */
+
+/* ── 4-column layout: 1600px+ ── */
+@media (min-width: 1600px) {
+  main.flex-1.overflow-y-auto > div.p-6 { padding: 36px 40px !important; }
+
+  .grid.grid-cols-2.md\:grid-cols-3.lg\:grid-cols-4 {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+
+  .grid.grid-cols-2.sm\:grid-cols-3.lg\:grid-cols-4.xl\:grid-cols-6 {
+    grid-template-columns: repeat(6, 1fr) !important;
+  }
+}
+
+/* ── 3-column layout: 1400–1599px ── */
+@media (max-width: 1599px) and (min-width: 1400px) {
+  .grid.grid-cols-1.xl\:grid-cols-2 {
+    grid-template-columns: 1fr !important;
+    max-width: 860px;
+  }
+}
+
+/* ── Laptop: up to 1400px ── */
+@media (max-width: 1400px) {
+  :root { --ec-sidebar-w: 260px; --ec-content-pad: 24px; }
+
+  main.flex-1.overflow-y-auto > div.p-6 { padding: 24px !important; }
+
+  .grid.grid-cols-2.md\:grid-cols-3.lg\:grid-cols-4 {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+}
+
+/* ── Tablet: up to 1024px ── */
+@media (max-width: 1024px) {
+  :root { --ec-sidebar-w: 240px; }
+
+  .grid.grid-cols-2.md\:grid-cols-3 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .grid.grid-cols-1.xl\:grid-cols-2 {
+    grid-template-columns: 1fr !important;
+  }
+
+  .grid.grid-cols-1.sm\:grid-cols-2.lg\:grid-cols-3 {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 16px !important;
+  }
+}
+
+/* ── Mobile: up to 768px ── */
+@media (max-width: 768px) {
+  :root {
+    --ec-content-pad: 16px;
+    --ec-input-h: 48px;
+    --ec-btn-h: 50px;
+    --ec-gap: 16px;
+  }
+
+  aside.w-60 { width: 0 !important; overflow: hidden; }
+
+  header.h-14 { height: 60px !important; padding: 0 16px !important; }
+
+  main.flex-1.overflow-y-auto > div.p-6 { padding: 16px !important; }
+
+  .grid.grid-cols-2,
+  .grid.grid-cols-3,
+  .grid.grid-cols-4,
+  .grid.grid-cols-2.md\:grid-cols-3.lg\:grid-cols-4,
+  .grid.grid-cols-2.sm\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .grid.grid-cols-1.sm\:grid-cols-2.lg\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rounded-2xl.bg-gradient-to-br {
+    padding: 20px !important;
+  }
+
+  /* Stack status banner vertically on mobile */
+  .flex.items-center.justify-between.p-4 {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}
+
+/* ── Extra small: under 480px ── */
+@media (max-width: 480px) {
+  :root { --ec-content-pad: 12px; }
+
+  main.flex-1.overflow-y-auto > div.p-6 { padding: 12px !important; }
+
+  .hidden.md\:flex { display: none !important; }
+}

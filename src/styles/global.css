@@ -1,0 +1,43 @@
+/* ============================================================
+   GLOBAL — Resets, body, root, selection, focus
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0; padding: 0;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: var(--ec-fs-body);
+  line-height: 1.5;
+  color: var(--ec-text-primary);
+  background: var(--ec-bg-root);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%; height: 100vh; overflow: hidden;
+  background: var(--ec-bg-root);
+}
+
+::selection {
+  background: rgba(37,99,235,.30);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ec-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--ec-radius-sm);
+}

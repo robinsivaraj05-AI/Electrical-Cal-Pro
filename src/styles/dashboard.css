@@ -1,0 +1,139 @@
+/* ============================================================
+   DASHBOARD — Hero, quick modules, charts, stats
+   ============================================================ */
+
+/* ── Page header (module title + standard ref line) ── */
+.space-y-6 > .flex.items-center.gap-3.pb-2 {
+  padding-bottom: 20px !important;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--ec-border-muted) !important;
+}
+
+/* Module icon container */
+.space-y-6 > .flex > div.p-2.rounded-lg {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 11px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0;
+}
+
+/* ── Dashboard hero banner numbers ── */
+.text-2xl.font-bold.text-blue-400,
+.text-2xl.font-bold.text-emerald-400,
+.text-2xl.font-bold.text-amber-400 {
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+/* ── Quick module grid ── */
+.grid.grid-cols-2.sm\:grid-cols-3.lg\:grid-cols-4.xl\:grid-cols-6,
+.grid.grid-cols-2.md\:grid-cols-3.lg\:grid-cols-4 {
+  gap: var(--ec-gap) !important;
+}
+
+/* Module card icon wrapper */
+.rounded-xl.border.p-4.cursor-pointer > div:first-child {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-bottom: 12px;
+}
+
+/* Module card title */
+.rounded-xl.border.p-4.cursor-pointer .text-sm.font-semibold,
+.rounded-xl.border.p-4.cursor-pointer .font-semibold {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: var(--ec-text-primary) !important;
+  margin-bottom: 4px;
+}
+
+/* Module card description */
+.rounded-xl.border.p-4.cursor-pointer .text-xs.text-slate-400 {
+  font-size: 11px !important;
+  color: var(--ec-text-muted) !important;
+  line-height: 1.5;
+}
+
+/* ── Standards table ── */
+.rounded-xl.overflow-hidden > table,
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table th {
+  background: rgba(59,130,246,.06) !important;
+  color: var(--ec-text-muted) !important;
+  font-size: 10px !important;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 12px 18px !important;
+  border-bottom: 1px solid var(--ec-border-muted);
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+table td {
+  padding: 14px 18px !important;
+  font-size: 13px !important;
+  border-bottom: 1px solid rgba(38,51,82,.5);
+  color: var(--ec-text-secondary);
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
+table tr:last-child td { border-bottom: none; }
+
+table tr:hover td {
+  background: rgba(59,130,246,.04);
+  color: var(--ec-text-primary);
+}
+
+/* ── Recharts tooltip override ── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--ec-bg-card) !important;
+  border: 1px solid var(--ec-border) !important;
+  border-radius: var(--ec-radius-sm) !important;
+  box-shadow: var(--ec-shadow-card) !important;
+  font-size: 12px !important;
+  color: var(--ec-text-primary) !important;
+}
+
+/* ── Recent calcs list ── */
+.divide-y > div {
+  transition: background .12s ease;
+}
+
+.divide-y > div:hover {
+  background: rgba(59,130,246,.04) !important;
+}
+
+/* ── Project Manager cards ── */
+.grid.gap-4 > .rounded-xl,
+.grid.gap-6 > .rounded-xl {
+  background: var(--ec-bg-card) !important;
+  border: 1px solid var(--ec-border) !important;
+  border-radius: var(--ec-radius-lg) !important;
+  box-shadow: var(--ec-shadow-card);
+  transition: var(--ec-transition);
+  overflow: hidden;
+}
+
+.grid.gap-4 > .rounded-xl:hover,
+.grid.gap-6 > .rounded-xl:hover {
+  border-color: rgba(59,130,246,.35) !important;
+  transform: translateY(-2px);
+  box-shadow: var(--ec-shadow-kpi);
+}

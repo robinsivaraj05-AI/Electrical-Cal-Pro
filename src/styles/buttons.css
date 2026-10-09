@@ -1,0 +1,55 @@
+/* ============================================================
+   BUTTONS — 54px primary blue/green · hover lift · shimmer
+   ============================================================ */
+
+/* Primary calculate buttons */
+main button.w-full[class*="py-3"],
+main button.w-full[class*="py-4"] {
+  height: var(--ec-btn-h) !important;
+  border-radius: var(--ec-radius-lg) !important;
+  font-size: 15px !important; font-weight: 700 !important;
+  letter-spacing: 0.01em;
+  transition: var(--ec-transition) !important;
+  position: relative; overflow: hidden;
+}
+
+/* Blue primary */
+main button.w-full.bg-blue-600,
+main button.w-full[class*="bg-blue-6"] {
+  background: var(--ec-grad-primary) !important;
+  color: #fff !important;
+  box-shadow: var(--ec-shadow-btn) !important;
+  border: none !important;
+}
+main button.w-full.bg-blue-600:hover { transform: translateY(-2px) !important; box-shadow: 0 14px 28px rgba(37,99,235,.50) !important; }
+
+/* Green success (Lighting etc.) */
+main button.w-full.bg-lime-600,
+main button.w-full.bg-green-600 {
+  background: var(--ec-grad-success) !important;
+  color: #fff !important;
+  box-shadow: var(--ec-shadow-btn-g) !important;
+}
+main button.w-full.bg-lime-600:hover,
+main button.w-full.bg-green-600:hover { transform: translateY(-2px) !important; box-shadow: 0 14px 28px rgba(34,197,94,.50) !important; }
+
+/* Orange */
+main button.w-full.bg-orange-600 {
+  background: linear-gradient(135deg,#FB923C,#F97316) !important;
+  color: #fff !important; box-shadow: 0 8px 20px rgba(251,146,60,.40) !important;
+}
+main button.w-full.bg-orange-600:hover { transform: translateY(-2px) !important; }
+
+/* Press */
+main button.w-full:active { transform: translateY(0) scale(0.98) !important; }
+
+/* Shimmer */
+main button.w-full[class*="py-3"]::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent);
+  transform: translateX(-100%);
+  transition: transform 500ms ease;
+  pointer-events: none;
+}
+main button.w-full[class*="py-3"]:hover::after { transform: translateX(100%); }

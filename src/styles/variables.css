@@ -1,0 +1,179 @@
+/* ============================================================
+   CSS CUSTOM PROPERTIES — ElecCalc Pro v2
+   Design System: ETAP · SIMARIS · EasyPower · Fluent UI
+   8-point spacing grid · Inter · Enterprise Engineering UI
+   ============================================================ */
+
+:root {
+  /* ── Core backgrounds ── */
+  --ec-bg-root:        #0F172A;
+  --ec-bg-app:         #0F172A;
+  --ec-bg-sidebar:     #111827;
+  --ec-bg-card:        #1E293B;
+  --ec-bg-card-alt:    #1A2438;
+  --ec-bg-input:       #0F172A;
+  --ec-bg-section:     #162032;
+  --ec-bg-hover:       #253347;
+  --ec-bg-active:      rgba(37,99,235,.15);
+
+  /* ── Borders ── */
+  --ec-border:         #334155;
+  --ec-border-muted:   #1E293B;
+  --ec-border-focus:   #2563EB;
+  --ec-border-card:    rgba(255,255,255,.05);
+
+  /* ── Primary — Blue ── */
+  --ec-primary:        #2563EB;
+  --ec-primary-hover:  #1D4ED8;
+  --ec-primary-glow:   rgba(37,99,235,.30);
+  --ec-primary-subtle: rgba(37,99,235,.10);
+
+  /* ── Success — Green ── */
+  --ec-success:        #22C55E;
+  --ec-success-hover:  #16A34A;
+  --ec-success-glow:   rgba(34,197,94,.30);
+  --ec-success-bg:     rgba(34,197,94,.10);
+  --ec-success-border: rgba(34,197,94,.30);
+
+  /* ── Warning — Amber ── */
+  --ec-warning:        #F59E0B;
+  --ec-warning-bg:     rgba(245,158,11,.10);
+  --ec-warning-border: rgba(245,158,11,.30);
+
+  /* ── Danger — Red ── */
+  --ec-danger:         #EF4444;
+  --ec-danger-bg:      rgba(239,68,68,.10);
+  --ec-danger-border:  rgba(239,68,68,.30);
+
+  /* ── Info — Cyan ── */
+  --ec-info:           #38BDF8;
+  --ec-info-bg:        rgba(56,189,248,.10);
+
+  /* ── Accent gradients ── */
+  --ec-grad-primary:   linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  --ec-grad-success:   linear-gradient(135deg, #22C55E 0%, #16A34A 100%);
+  --ec-grad-hero:      linear-gradient(135deg, #1a2744 0%, #0F172A 100%);
+  --ec-grad-sidebar:   linear-gradient(180deg, #111827 0%, #0D1520 100%);
+  --ec-grad-card:      linear-gradient(180deg, rgba(255,255,255,.03) 0%, transparent 100%);
+
+  /* ── Text ── */
+  --ec-text-primary:   #F8FAFC;
+  --ec-text-secondary: #CBD5E1;
+  --ec-text-muted:     #64748B;
+  --ec-text-accent:    #60A5FA;
+  --ec-text-inverse:   #0F172A;
+
+  /* ── Typography Scale ── */
+  --ec-fs-app-title:  30px;
+  --ec-fs-module:     24px;
+  --ec-fs-section:    20px;
+  --ec-fs-card-title: 18px;
+  --ec-fs-label:      14px;
+  --ec-fs-input:      16px;
+  --ec-fs-result:     34px;
+  --ec-fs-result-unit:18px;
+  --ec-fs-body:       15px;
+  --ec-fs-small:      13px;
+  --ec-fs-helper:     12px;
+  --ec-fs-formula:    15px;
+
+  /* ── Spacing (8-point grid) ── */
+  --ec-space-1:   4px;
+  --ec-space-2:   8px;
+  --ec-space-3:   12px;
+  --ec-space-4:   16px;
+  --ec-space-5:   24px;
+  --ec-space-6:   32px;
+  --ec-space-7:   40px;
+  --ec-space-8:   48px;
+
+  /* ── Radii ── */
+  --ec-radius-sm:   8px;
+  --ec-radius-md:   10px;
+  --ec-radius-lg:   12px;
+  --ec-radius-xl:   16px;
+  --ec-radius-2xl:  20px;
+  --ec-radius-full: 999px;
+
+  /* ── Shadows ── */
+  --ec-shadow-xs:    0 1px 3px rgba(0,0,0,.25);
+  --ec-shadow-sm:    0 4px 12px rgba(0,0,0,.30);
+  --ec-shadow-card:  0 10px 30px rgba(0,0,0,.30), 0 1px 0 rgba(255,255,255,.04) inset;
+  --ec-shadow-modal: 0 25px 60px rgba(0,0,0,.50);
+  --ec-shadow-btn:   0 8px 20px rgba(37,99,235,.40);
+  --ec-shadow-btn-g: 0 8px 20px rgba(34,197,94,.40);
+  --ec-shadow-kpi:   0 12px 40px rgba(0,0,0,.45);
+  --ec-shadow-sidebar:4px 0 20px rgba(0,0,0,.35);
+
+  /* ── Transitions ── */
+  --ec-dur:         200ms;
+  --ec-ease:        cubic-bezier(0.4,0,0.2,1);
+  --ec-transition:  all 200ms cubic-bezier(0.4,0,0.2,1);
+  --ec-transition-fast: all 120ms cubic-bezier(0.4,0,0.2,1);
+
+  /* ── Layout ── */
+  --ec-sidebar-w:       280px;
+  --ec-sidebar-w-col:    80px;
+  --ec-header-h:         72px;
+  --ec-content-max:    1700px;
+  --ec-content-pad:      32px;
+  --ec-section-gap:      28px;
+  --ec-card-gap:         24px;
+  --ec-card-pad:         24px;
+  --ec-input-h:          52px;
+  --ec-btn-h:            54px;
+  --ec-btn-h-sm:         40px;
+  --ec-row-h:            52px;
+  --ec-header-row-h:     48px;
+
+  /* ── Extended tokens ── */
+  --ec-text-label:      #94A3B8;          /* form label, slate-400 */
+  --ec-bg-surface:      rgba(255,255,255,.025); /* subtle nested surface inside cards */
+}
+
+/* ============================================================
+   LIGHT THEME OVERRIDES — applied via [data-theme="light"] on <html>
+   ============================================================ */
+[data-theme="light"] {
+  /* Core backgrounds */
+  --ec-bg-root:          #F0F4F8;
+  --ec-bg-app:           #F0F4F8;
+  --ec-bg-sidebar:       #1E293B;      /* keep sidebar dark — enterprise convention */
+  --ec-bg-card:          #FFFFFF;
+  --ec-bg-card-alt:      #F8FAFC;
+  --ec-bg-input:         #F8FAFC;
+  --ec-bg-section:       #EFF6FF;
+  --ec-bg-hover:         #E2E8F0;
+  --ec-bg-active:        rgba(37,99,235,.10);
+
+  /* Borders */
+  --ec-border:           #CBD5E1;
+  --ec-border-muted:     #E2E8F0;
+  --ec-border-focus:     #2563EB;
+  --ec-border-card:      rgba(0,0,0,.07);
+
+  /* Text */
+  --ec-text-primary:     #0F172A;
+  --ec-text-secondary:   #334155;
+  --ec-text-muted:       #64748B;
+  --ec-text-label:       #64748B;      /* slightly darker labels in light mode */
+  --ec-text-accent:      #2563EB;
+  --ec-text-inverse:     #FFFFFF;
+
+  /* Gradients */
+  --ec-grad-hero:        linear-gradient(135deg, #EFF6FF 0%, #F0F4F8 100%);
+  --ec-grad-sidebar:     linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
+  --ec-grad-card:        linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(248,250,252,.85) 100%);
+
+  /* Shadows — lighter for light backgrounds */
+  --ec-shadow-xs:        0 1px 3px rgba(0,0,0,.08);
+  --ec-shadow-sm:        0 2px 8px rgba(0,0,0,.10);
+  --ec-shadow-card:      0 2px 10px rgba(0,0,0,.07), 0 1px 0 rgba(0,0,0,.03);
+  --ec-shadow-modal:     0 16px 48px rgba(0,0,0,.20);
+  --ec-shadow-btn:       0 6px 16px rgba(37,99,235,.35);
+  --ec-shadow-kpi:       0 4px 14px rgba(0,0,0,.08);
+  --ec-shadow-sidebar:   4px 0 20px rgba(0,0,0,.15);
+
+  /* Surface */
+  --ec-bg-surface:       rgba(0,0,0,.025);
+}

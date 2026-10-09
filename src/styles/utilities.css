@@ -1,0 +1,134 @@
+/* ============================================================
+   UTILITIES — Premium helper classes and grid system
+   ============================================================ */
+
+/* ── Grid system ── */
+.ec-grid          { display: grid; gap: var(--ec-gap); }
+.ec-grid-2        { display: grid; grid-template-columns: repeat(2,1fr); gap: var(--ec-gap); }
+.ec-grid-3        { display: grid; grid-template-columns: repeat(3,1fr); gap: var(--ec-gap); }
+.ec-grid-4        { display: grid; grid-template-columns: repeat(4,1fr); gap: var(--ec-gap); }
+.ec-grid-auto     { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: var(--ec-gap); }
+
+/* ── KPI Card ── */
+.ec-kpi {
+  background: var(--ec-bg-card);
+  border: 1px solid var(--ec-border);
+  border-radius: var(--ec-radius-lg);
+  padding: 20px 22px;
+  box-shadow: var(--ec-shadow-card);
+  position: relative;
+  overflow: hidden;
+  transition: var(--ec-transition);
+}
+
+.ec-kpi:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--ec-shadow-kpi);
+  border-color: rgba(59,130,246,.3);
+}
+
+.ec-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ec-text-muted);
+  margin-bottom: 8px;
+}
+
+.ec-kpi-value {
+  font-size: var(--ec-fs-3xl);
+  font-weight: 800;
+  color: var(--ec-text-primary);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.ec-kpi-unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ec-text-muted);
+  margin-left: 6px;
+  vertical-align: super;
+  font-size: 11px;
+}
+
+.ec-kpi-sub {
+  font-size: 12px;
+  color: var(--ec-text-muted);
+  margin-top: 6px;
+}
+
+/* KPI accent top bar */
+.ec-kpi--primary::before  { content: ''; position: absolute; top:0;left:0;right:0;height:2px;background:var(--ec-grad-primary); }
+.ec-kpi--success::before  { content: ''; position: absolute; top:0;left:0;right:0;height:2px;background:var(--ec-success); }
+.ec-kpi--warning::before  { content: ''; position: absolute; top:0;left:0;right:0;height:2px;background:var(--ec-warning); }
+.ec-kpi--danger::before   { content: ''; position: absolute; top:0;left:0;right:0;height:2px;background:var(--ec-danger); }
+
+/* ── Status badges ── */
+.ec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--ec-radius-full);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ec-badge--pass    { background: var(--ec-success-bg);  color: var(--ec-success);  border: 1px solid var(--ec-success-border); }
+.ec-badge--fail    { background: var(--ec-danger-bg);   color: var(--ec-danger);   border: 1px solid var(--ec-danger-border);  }
+.ec-badge--warn    { background: var(--ec-warning-bg);  color: var(--ec-warning);  border: 1px solid var(--ec-warning-border); }
+.ec-badge--info    { background: var(--ec-primary-subtle); color: var(--ec-primary); border: 1px solid rgba(59,130,246,.25); }
+
+/* ── Section divider ── */
+.ec-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--ec-border), transparent);
+  margin: 24px 0;
+}
+
+/* ── Surface levels ── */
+.ec-surface-1 { background: var(--ec-bg-card);    border: 1px solid var(--ec-border);      border-radius: var(--ec-radius-lg); }
+.ec-surface-2 { background: var(--ec-bg-card-alt); border: 1px solid var(--ec-border-muted); border-radius: var(--ec-radius-md); }
+.ec-surface-3 { background: var(--ec-bg-section);  border: 1px solid var(--ec-border-muted); border-radius: var(--ec-radius-sm); }
+
+/* ── Spacing helpers ── */
+.ec-p-card { padding: var(--ec-card-pad); }
+.ec-gap     { gap: var(--ec-gap); }
+
+/* ── Text utilities ── */
+.ec-text-label    { font-size: 11px; font-weight: 700; letter-spacing: .10em; text-transform: uppercase; color: var(--ec-text-muted); }
+.ec-text-value    { font-size: var(--ec-fs-3xl); font-weight: 800; letter-spacing: -.03em; }
+.ec-text-body     { font-size: var(--ec-fs-base); color: var(--ec-text-secondary); line-height: 1.6; }
+.ec-text-accent   { color: var(--ec-text-accent); }
+.ec-text-success  { color: var(--ec-success); }
+.ec-text-warning  { color: var(--ec-warning); }
+.ec-text-danger   { color: var(--ec-danger); }
+.ec-text-muted    { color: var(--ec-text-muted); }
+
+/* ── Formula display ── */
+.ec-formula {
+  background: rgba(59,130,246,.06);
+  border: 1px solid rgba(59,130,246,.15);
+  border-left: 3px solid var(--ec-primary);
+  border-radius: 0 var(--ec-radius-sm) var(--ec-radius-sm) 0;
+  padding: 14px 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #93C5FD;
+  line-height: 1.7;
+}
+
+/* ── Loading state ── */
+.ec-loading {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(59,130,246,.2);
+  border-top-color: var(--ec-primary);
+  border-radius: 50%;
+  animation: ecSpin .7s linear infinite;
+}

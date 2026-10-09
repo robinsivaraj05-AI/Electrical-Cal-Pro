@@ -1,0 +1,173 @@
+/* ============================================================
+   ElecCalc Pro v2 — Enterprise Engineering Design System
+   ETAP · SIMARIS · EasyPower · Fluent UI Inspired
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@import "tailwindcss";
+@import "./styles/variables.css";
+@import "./styles/animations.css";
+@import "./styles/global.css";
+@import "./styles/typography.css";
+@import "./styles/sidebar.css";
+@import "./styles/header.css";
+@import "./styles/cards.css";
+@import "./styles/forms.css";
+@import "./styles/buttons.css";
+@import "./styles/dashboard.css";
+@import "./styles/utilities.css";
+@import "./styles/responsive.css";
+
+/* ============================================================
+   Tailwind v4 @theme — Enterprise dark navy scale
+   ============================================================ */
+@theme {
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+
+  /* ── Slate → Enterprise navy/slate ── */
+  --color-slate-50:  #F8FAFC;
+  --color-slate-100: #F1F5F9;
+  --color-slate-200: #E2E8F0;
+  --color-slate-300: #CBD5E1;
+  --color-slate-400: #94A3B8;
+  --color-slate-500: #64748B;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1E293B;
+  --color-slate-900: #111827;
+  --color-slate-950: #0F172A;
+
+  /* ── Blue primary ── */
+  --color-blue-400: #60A5FA;
+  --color-blue-500: #3B82F6;
+  --color-blue-600: #2563EB;
+  --color-blue-700: #1D4ED8;
+
+  /* ── Green success ── */
+  --color-green-400: #4ADE80;
+  --color-green-500: #22C55E;
+  --color-green-600: #16A34A;
+
+  /* ── Emerald ── */
+  --color-emerald-400: #34D399;
+  --color-emerald-500: #10B981;
+
+  /* ── Amber warning ── */
+  --color-amber-400: #FCD34D;
+  --color-amber-500: #F59E0B;
+  --color-amber-600: #D97706;
+
+  /* ── Red danger ── */
+  --color-red-400: #F87171;
+  --color-red-500: #EF4444;
+
+  /* ── Cyan info ── */
+  --color-cyan-400: #22D3EE;
+  --color-cyan-500: #06B6D4;
+
+  /* ── Orange ── */
+  --color-orange-400: #FB923C;
+  --color-orange-500: #F97316;
+
+  /* ── Purple ── */
+  --color-purple-400: #C084FC;
+  --color-purple-500: #A855F7;
+
+  /* ── Yellow ── */
+  --color-yellow-400: #FACC15;
+
+  /* ── Lime ── */
+  --color-lime-400: #A3E635;
+  --color-lime-500: #84CC16;
+  --color-lime-600: #65A30D;
+
+  /* ── Teal ── */
+  --color-teal-400: #2DD4BF;
+  --color-teal-500: #14B8A6;
+
+  /* ── Indigo ── */
+  --color-indigo-400: #818CF8;
+  --color-indigo-500: #6366F1;
+}
+
+/* ============================================================
+   Status badges
+   ============================================================ */
+.badge-pass {
+  background: var(--ec-success-bg);
+  color: var(--ec-success);
+  border: 1px solid var(--ec-success-border);
+  border-radius: 6px; padding: 3px 10px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.badge-fail {
+  background: var(--ec-danger-bg);
+  color: var(--ec-danger);
+  border: 1px solid var(--ec-danger-border);
+  border-radius: 6px; padding: 3px 10px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.badge-warning {
+  background: var(--ec-warning-bg);
+  color: var(--ec-warning);
+  border: 1px solid var(--ec-warning-border);
+  border-radius: 6px; padding: 3px 10px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.badge-info {
+  background: var(--ec-info-bg);
+  color: var(--ec-info);
+  border: 1px solid rgba(56,189,248,.30);
+  border-radius: 6px; padding: 3px 10px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+
+/* ============================================================
+   Formula box
+   ============================================================ */
+.formula-box {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--ec-fs-formula);
+  background: rgba(37,99,235,.06);
+  border: 1px solid rgba(37,99,235,.20);
+  border-left: 3px solid var(--ec-primary);
+  border-radius: 0 var(--ec-radius-lg) var(--ec-radius-lg) 0;
+  padding: 16px 20px;
+  color: #93C5FD;
+  line-height: 1.7;
+}
+
+/* ============================================================
+   Scrollbar — thin and subtle
+   ============================================================ */
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: #334155; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* ============================================================
+   Fade-in animation
+   ============================================================ */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 250ms cubic-bezier(0.4,0,0.2,1) both; }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-slideUp { animation: slideUp 300ms cubic-bezier(0.4,0,0.2,1) both; }
+
+/* Print */
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+}

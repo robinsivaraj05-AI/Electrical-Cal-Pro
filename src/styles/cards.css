@@ -1,0 +1,79 @@
+/* ============================================================
+   CARDS — 16px radius · 24px padding · enterprise shadows
+   ============================================================ */
+
+/* Generic card surface */
+.ec-card {
+  background: var(--ec-bg-card);
+  border: 1px solid var(--ec-border-card);
+  border-radius: var(--ec-radius-xl);
+  padding: var(--ec-card-pad);
+  box-shadow: var(--ec-shadow-card);
+}
+
+/* FormSection wrapper */
+main .rounded-xl.border {
+  background: var(--ec-bg-card) !important;
+  border-color: rgba(255,255,255,.05) !important;
+  border-radius: var(--ec-radius-xl) !important;
+  box-shadow: var(--ec-shadow-card) !important;
+}
+
+/* Section header bar */
+main .rounded-xl > .px-4.py-3.border-b,
+main .rounded-xl > .px-4.py-3 {
+  background: rgba(255,255,255,.02) !important;
+  border-bottom-color: rgba(255,255,255,.05) !important;
+  border-radius: var(--ec-radius-xl) var(--ec-radius-xl) 0 0;
+}
+
+/* Section title */
+main .rounded-xl > .px-4.py-3 h3,
+main .rounded-xl > .px-4.py-3 span {
+  font-size: 13px !important; font-weight: 700 !important;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  color: #64748B !important;
+}
+
+/* Dividers */
+main .divide-y > * { border-color: rgba(255,255,255,.04) !important; }
+main .border-t, main .border-b { border-color: rgba(255,255,255,.06) !important; }
+main hr { border-color: rgba(255,255,255,.05) !important; }
+
+/* KPI result card */
+.ec-kpi {
+  background: var(--ec-bg-card);
+  border: 1px solid rgba(255,255,255,.05);
+  border-radius: var(--ec-radius-xl);
+  padding: 20px;
+  box-shadow: var(--ec-shadow-kpi);
+  transition: var(--ec-transition-fast);
+}
+.ec-kpi:hover { transform: translateY(-2px); }
+
+/* Highlight border (result highlight) */
+main [class*="bg-blue-900"],
+main [class*="bg-blue-600/10"] {
+  background: rgba(37,99,235,.08) !important;
+  border-color: rgba(37,99,235,.25) !important;
+}
+
+/* ── Light theme overrides ───────────────────────────────── */
+[data-theme="light"] main .rounded-xl.border {
+  border-color: rgba(0,0,0,.06) !important;
+}
+
+[data-theme="light"] main .rounded-xl > .px-4.py-3.border-b,
+[data-theme="light"] main .rounded-xl > .px-4.py-3 {
+  background: rgba(0,0,0,.02) !important;
+  border-bottom-color: rgba(0,0,0,.06) !important;
+}
+
+[data-theme="light"] main .divide-y > * { border-color: rgba(0,0,0,.05) !important; }
+[data-theme="light"] main .border-t,
+[data-theme="light"] main .border-b     { border-color: rgba(0,0,0,.06) !important; }
+[data-theme="light"] main hr            { border-color: rgba(0,0,0,.06) !important; }
+
+[data-theme="light"] .ec-kpi {
+  border-color: rgba(0,0,0,.06);
+}

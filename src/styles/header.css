@@ -1,0 +1,93 @@
+/* ============================================================
+   HEADER — 72px enterprise top bar
+   Contains: logo (collapsed), search 520px, notifications, profile
+   ============================================================ */
+
+.ec-header {
+  height: var(--ec-header-h);
+  background: var(--ec-bg-sidebar);
+  border-bottom: 1px solid #1a2535;
+  display: flex; align-items: center;
+  padding: 0 var(--ec-content-pad);
+  gap: 16px; flex-shrink: 0; z-index: 10;
+  position: relative;
+}
+
+/* Bottom accent */
+.ec-header::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(37,99,235,.30) 30%, rgba(37,99,235,.30) 70%, transparent 100%);
+}
+
+/* Search bar */
+.ec-search {
+  flex: 1; max-width: 520px;
+  height: 48px;
+  background: #0F172A;
+  border: 1px solid #334155;
+  border-radius: var(--ec-radius-lg);
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 14px;
+  transition: var(--ec-transition);
+}
+.ec-search:focus-within {
+  border-color: var(--ec-primary);
+  box-shadow: 0 0 0 3px var(--ec-primary-glow);
+}
+.ec-search input {
+  flex: 1; background: none; border: none; outline: none;
+  font-size: 14px; color: var(--ec-text-primary);
+  font-family: 'Inter', sans-serif;
+}
+.ec-search input::placeholder { color: #475569; }
+
+/* Kbd shortcut */
+.ec-kbd {
+  font-size: 10px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+  color: #475569; background: #1E293B;
+  border: 1px solid #334155;
+  border-radius: 5px; padding: 2px 6px;
+}
+
+/* Icon buttons in header */
+.ec-header-btn {
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--ec-radius-md);
+  color: #64748B; cursor: pointer;
+  transition: var(--ec-transition);
+  background: none; border: none;
+  position: relative;
+}
+.ec-header-btn:hover {
+  background: #1E293B; color: var(--ec-text-primary);
+}
+
+/* Notification badge */
+.ec-notif-badge {
+  position: absolute; top: 4px; right: 4px;
+  width: 18px; height: 18px;
+  background: #EF4444; border-radius: 50%;
+  font-size: 9px; font-weight: 800; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+
+/* User avatar */
+.ec-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: linear-gradient(135deg, #2563EB, #1D4ED8);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; color: #fff;
+  letter-spacing: 0.04em; flex-shrink: 0;
+}
+
+/* User profile block */
+.ec-user-profile {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  border-radius: var(--ec-radius-lg);
+  cursor: pointer; transition: var(--ec-transition);
+}
+.ec-user-profile:hover { background: #1E293B; }

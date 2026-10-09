@@ -1,0 +1,86 @@
+/* ============================================================
+   ANIMATIONS — Keyframes and motion utilities
+   ============================================================ */
+
+/* ── Core entry animations ── */
+@keyframes ecFadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ecFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes ecSlideRight {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes ecSlideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ecScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes ecPulseGlow {
+  0%,100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  50%      { box-shadow: 0 0 0 6px rgba(59,130,246,.15); }
+}
+
+@keyframes ecShimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes ecSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Animation utility classes ── */
+.ec-fade-up   { animation: ecFadeUp   .35s cubic-bezier(.4,0,.2,1) both; }
+.ec-fade-in   { animation: ecFadeIn   .25s ease both; }
+.ec-slide-r   { animation: ecSlideRight .3s cubic-bezier(.4,0,.2,1) both; }
+.ec-scale-in  { animation: ecScaleIn  .25s cubic-bezier(.4,0,.2,1) both; }
+
+/* ── Stagger delay helpers ── */
+.ec-delay-1 { animation-delay: .05s; }
+.ec-delay-2 { animation-delay: .10s; }
+.ec-delay-3 { animation-delay: .15s; }
+.ec-delay-4 { animation-delay: .20s; }
+
+/* ── Card hover lift ── */
+.ec-card-hover {
+  transition: var(--ec-transition);
+}
+.ec-card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--ec-shadow-kpi);
+}
+
+/* ── Sidebar item transition ── */
+.ec-nav-item {
+  transition: background .15s ease, color .15s ease, transform .12s ease;
+}
+.ec-nav-item:hover {
+  transform: translateX(2px);
+}
+
+/* ── Loading shimmer ── */
+.ec-shimmer {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,.03) 0%,
+    rgba(255,255,255,.08) 50%,
+    rgba(255,255,255,.03) 100%
+  );
+  background-size: 200%;
+  animation: ecShimmer 1.8s infinite;
+}
+
+/* ── Status pulse ── */
+.ec-pulse { animation: ecPulseGlow 2s ease infinite; }
