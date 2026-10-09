@@ -7,11 +7,17 @@
     "dev": "vite",
     "dev:server": "cd server && npm run dev",
     "dev:all": "concurrently -n \"frontend,backend\" -c \"cyan,green\" \"npm run dev\" \"npm run dev:server\"",
-    "build": "tsc -b && vite build",
+    "build": "prisma generate && tsc -b && vite build",
+    "postinstall": "prisma generate",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
     "jspdf": "^4.2.1",
@@ -24,7 +30,15 @@
     "xlsx": "^0.18.5",
     "zustand": "^5.0.15"
   },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "prisma": "^5.22.0",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",

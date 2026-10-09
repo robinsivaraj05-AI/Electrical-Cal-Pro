@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model User {
+  id        String       @id @default(cuid())
+  email     String       @unique
+  password  String
+  name      String
+  company   String?
+  role      String       @default("engineer")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  projects  Project[]
+  settings  UserSettings?
+
+  @@map("users")
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  name         String
+  client       String?
+  engineer     String
+  projectNo    String?
+  revision     String        @default("A")
+  date         String?
+  companyName  String?
+  description  String?
+  status       String        @default("active")
+  userId       String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  calculations Calculation[]
+
+  @@map("projects")
+}
+
+model Calculation {
+  id        String   @id @default(cuid())
+  projectId String
+  type      String
+  title     String
+  inputs    String
+  results   String
+  notes     String?
+  standard  String?
+  tags      String?
+  revision  String   @default("A")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("calculations")
+}
+
+model UserSettings {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  theme        String   @default("dark")
+  unitSystem   String   @default("metric")
+  standard     String   @default("IEC")
+  companyName  String?
+  engineerName String?
+  autoSave     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
