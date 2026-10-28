@@ -64,18 +64,18 @@
   --ec-text-inverse:   #0F172A;
 
   /* ── Typography Scale ── */
-  --ec-fs-app-title:  30px;
-  --ec-fs-module:     24px;
-  --ec-fs-section:    20px;
-  --ec-fs-card-title: 18px;
-  --ec-fs-label:      14px;
-  --ec-fs-input:      16px;
-  --ec-fs-result:     34px;
-  --ec-fs-result-unit:18px;
-  --ec-fs-body:       15px;
-  --ec-fs-small:      13px;
-  --ec-fs-helper:     12px;
-  --ec-fs-formula:    15px;
+  --ec-fs-app-title:  24px;
+  --ec-fs-module:     20px;
+  --ec-fs-section:    17px;
+  --ec-fs-card-title: 15px;
+  --ec-fs-label:      12px;
+  --ec-fs-input:      13px;
+  --ec-fs-result:     28px;
+  --ec-fs-result-unit:15px;
+  --ec-fs-body:       13px;
+  --ec-fs-small:      11px;
+  --ec-fs-helper:     10px;
+  --ec-fs-formula:    12px;
 
   /* ── Spacing (8-point grid) ── */
   --ec-space-1:   4px;
