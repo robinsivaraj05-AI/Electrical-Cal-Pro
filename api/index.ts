@@ -37,6 +37,23 @@ function authMiddleware(req: any, res: any, next: any) {
   }
 }
 
+// ── Auto-seed demo user ──────────────────────────────────────
+(async () => {
+  try {
+    const exists = await prisma.user.findUnique({ where: { email: 'engineer@eleccalc.pro' } });
+    if (!exists) {
+      const password = await bcrypt.hash('engineer123', 12);
+      await prisma.user.create({
+        data: {
+          email: 'engineer@eleccalc.pro', password, name: 'Demo Engineer',
+          company: 'ElecCalc Pro', role: 'engineer',
+          settings: { create: { theme: 'dark', unitSystem: 'metric', standard: 'IEC', engineerName: 'Demo Engineer', companyName: 'ElecCalc Pro', autoSave: true } },
+        },
+      });
+    }
+  } catch { /* db not ready yet */ }
+})();
+
 // ── Health ──────────────────────────────────────────────────
 app.get('/api/health', async (_req, res) => {
   try {
