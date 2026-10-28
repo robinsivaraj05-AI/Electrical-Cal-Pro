@@ -24,7 +24,7 @@ body {
   background: var(--ec-bg-root);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  zoom: 0.85;
+  zoom: 0.9;
 }
 
 #root {
