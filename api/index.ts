@@ -54,6 +54,25 @@ function authMiddleware(req: any, res: any, next: any) {
   } catch { /* db not ready yet */ }
 })();
 
+// ── Init / Seed endpoint ────────────────────────────────────
+app.get('/api/init', async (_req, res) => {
+  try {
+    const password = await bcrypt.hash('engineer123', 12);
+    await prisma.user.upsert({
+      where: { email: 'engineer@eleccalc.pro' },
+      update: {},
+      create: {
+        email: 'engineer@eleccalc.pro', password, name: 'Demo Engineer',
+        company: 'ElecCalc Pro', role: 'engineer',
+        settings: { create: { theme: 'dark', unitSystem: 'metric', standard: 'IEC', engineerName: 'Demo Engineer', companyName: 'ElecCalc Pro', autoSave: true } },
+      },
+    });
+    res.json({ status: 'ok', message: 'Demo user ready: engineer@eleccalc.pro / engineer123' });
+  } catch (e: any) {
+    res.status(500).json({ status: 'error', message: e.message });
+  }
+});
+
 // ── Health ──────────────────────────────────────────────────
 app.get('/api/health', async (_req, res) => {
   try {

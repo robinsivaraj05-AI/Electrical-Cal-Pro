@@ -158,16 +158,20 @@ const MODULE_COMPONENTS: Record<string, React.ReactNode> = {
 };
 
 export default function App() {
-  const { activeModule } = useStore();
+  const { activeModule, syncFromCloud } = useStore();
   const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
   }, []);
 
+  useEffect(() => {
+    if (isAuthenticated) syncFromCloud();
+  }, [isAuthenticated]);
+
   if (isLoading && !isAuthenticated) {
     return (
-      <div style={{ minHeight: '100vh', background: '#0F172A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: '100%', height: '100%', background: '#0F172A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ color: '#475569', fontSize: 14 }}>Loading...</div>
       </div>
     );
@@ -178,7 +182,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--ec-bg-root)', color: 'var(--ec-text-primary)' }}>
+    <div className="flex overflow-hidden" style={{ width: '100%', height: '100%', background: 'var(--ec-bg-root)', color: 'var(--ec-text-primary)' }}>
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

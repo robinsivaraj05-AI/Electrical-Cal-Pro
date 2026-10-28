@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { Project, AppSettings, Calculation } from '../types';
+import { getToken } from '../api/client';
+import { projectsApi, calculationsApi } from '../api';
 
 interface AppState {
   projects: Project[];
@@ -8,19 +10,20 @@ interface AppState {
   activeModule: string;
   sidebarOpen: boolean;
   calculationHistory: Calculation[];
+  isSyncing: boolean;
 
-  // Actions
   setActiveModule: (module: string) => void;
   toggleSidebar: () => void;
   setTheme: (theme: 'dark' | 'light') => void;
   toggleTheme: () => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
-  createProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt' | 'calculations'>) => void;
+  createProject: (project: Omit<Project, 'id' | 'createdAt' | 'updatedAt' | 'calculations'>) => Promise<void>;
   updateProject: (id: string, data: Partial<Project>) => void;
   deleteProject: (id: string) => void;
   setActiveProject: (id: string) => void;
   addCalculation: (calc: Omit<Calculation, 'id' | 'timestamp'>) => void;
   clearHistory: () => void;
+  syncFromCloud: () => Promise<void>;
 }
 
 const defaultSettings: AppSettings = {
@@ -49,13 +52,16 @@ function saveToStorage<T>(key: string, data: T): void {
   } catch {}
 }
 
+const isLoggedIn = () => !!getToken();
+
 export const useStore = create<AppState>((set, get) => ({
-  projects: loadFromStorage<Project[]>('projects', []),
-  activeProjectId: loadFromStorage<string | null>('activeProjectId', null),
-  settings: loadFromStorage<AppSettings>('settings', defaultSettings),
-  activeModule: 'dashboard',
-  sidebarOpen: true,
+  projects:           loadFromStorage<Project[]>('projects', []),
+  activeProjectId:    loadFromStorage<string | null>('activeProjectId', null),
+  settings:           loadFromStorage<AppSettings>('settings', defaultSettings),
+  activeModule:       'dashboard',
+  sidebarOpen:        true,
   calculationHistory: loadFromStorage<Calculation[]>('history', []),
+  isSyncing:          false,
 
   setActiveModule: (module) => set({ activeModule: module }),
 
@@ -78,10 +84,11 @@ export const useStore = create<AppState>((set, get) => ({
     saveToStorage('settings', next);
   },
 
-  createProject: (data) => {
+  createProject: async (data) => {
+    const localId = crypto.randomUUID();
     const project: Project = {
       ...data,
-      id: crypto.randomUUID(),
+      id: localId,
       calculations: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -90,6 +97,25 @@ export const useStore = create<AppState>((set, get) => ({
     set({ projects, activeProjectId: project.id });
     saveToStorage('projects', projects);
     saveToStorage('activeProjectId', project.id);
+
+    // Sync to cloud
+    if (isLoggedIn()) {
+      try {
+        const res = await projectsApi.create({
+          name: data.name, client: data.client, engineer: data.engineer,
+          projectNo: data.projectNo, revision: data.revision, date: data.date,
+          companyName: data.companyName,
+        });
+        // Replace local id with cloud id
+        const cloudId = res.project.id;
+        const updated = get().projects.map((p) =>
+          p.id === localId ? { ...p, id: cloudId } : p
+        );
+        set({ projects: updated, activeProjectId: cloudId });
+        saveToStorage('projects', updated);
+        saveToStorage('activeProjectId', cloudId);
+      } catch { /* offline — local only */ }
+    }
   },
 
   updateProject: (id, data) => {
@@ -98,6 +124,9 @@ export const useStore = create<AppState>((set, get) => ({
     );
     set({ projects });
     saveToStorage('projects', projects);
+    if (isLoggedIn()) {
+      projectsApi.update(id, data).catch(() => {});
+    }
   },
 
   deleteProject: (id) => {
@@ -106,6 +135,9 @@ export const useStore = create<AppState>((set, get) => ({
     set({ projects, activeProjectId });
     saveToStorage('projects', projects);
     saveToStorage('activeProjectId', activeProjectId);
+    if (isLoggedIn()) {
+      projectsApi.delete(id).catch(() => {});
+    }
   },
 
   setActiveProject: (id) => {
@@ -132,12 +164,51 @@ export const useStore = create<AppState>((set, get) => ({
       );
       set({ projects: updatedProjects });
       saveToStorage('projects', updatedProjects);
+
+      // Sync to cloud
+      if (isLoggedIn()) {
+        calculationsApi.save({
+          projectId: activeProjectId,
+          type: calc.type,
+          title: calc.title,
+          inputs: calc.inputs as Record<string, unknown>,
+          results: calc.results as Record<string, unknown>,
+          notes: calc.notes,
+          standard: calc.standard,
+        }).catch(() => {});
+      }
     }
   },
 
   clearHistory: () => {
     set({ calculationHistory: [] });
     saveToStorage('history', []);
+  },
+
+  syncFromCloud: async () => {
+    if (!isLoggedIn()) return;
+    set({ isSyncing: true });
+    try {
+      const res = await projectsApi.list({ limit: 50 });
+      const cloudProjects: Project[] = res.projects.map((p) => ({
+        id: p.id,
+        name: p.name,
+        client: p.client ?? '',
+        engineer: p.engineer,
+        projectNo: p.projectNo ?? '',
+        revision: p.revision,
+        date: p.date ?? '',
+        companyName: p.companyName ?? '',
+        calculations: [],
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      }));
+      if (cloudProjects.length > 0) {
+        set({ projects: cloudProjects });
+        saveToStorage('projects', cloudProjects);
+      }
+    } catch { /* offline */ }
+    set({ isSyncing: false });
   },
 }));
 

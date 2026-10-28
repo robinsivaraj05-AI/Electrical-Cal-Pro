@@ -11,7 +11,6 @@
 
 html {
   font-size: 13px;
-  zoom: 0.9;
   scroll-behavior: smooth;
   text-rendering: optimizeLegibility;
   -webkit-text-size-adjust: 100%;
@@ -26,13 +25,19 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   margin: 0; padding: 0;
+  overflow: hidden;
 }
 
 #root {
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 111.11vw;
   height: 111.11vh;
   overflow: hidden;
   background: var(--ec-bg-root);
+  transform: scale(0.9);
+  transform-origin: top left;
 }
 
 ::selection {
