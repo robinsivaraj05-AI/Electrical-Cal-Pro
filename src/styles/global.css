@@ -29,7 +29,9 @@ body {
 }
 
 #root {
-  width: 100%; height: 100vh; overflow: hidden;
+  width: 111.11vw;
+  height: 111.11vh;
+  overflow: hidden;
   background: var(--ec-bg-root);
 }
 
