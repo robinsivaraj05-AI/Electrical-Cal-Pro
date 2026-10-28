@@ -477,7 +477,10 @@ export function HVCommissioning() {
   const toggle = (id: string) => setExpanded(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const setRes = (id: string, field: 'result' | 'measured' | 'remarks', val: string) =>
-    setResults(p => ({ ...p, [id]: { result: '', measured: '', remarks: '', ...p[id], [field]: val } }));
+    setResults(p => {
+      const prev = p[id] ?? { result: '', measured: '', remarks: '' };
+      return { ...p, [id]: { ...prev, [field]: val } };
+    });
 
   const passCount = TESTS.filter(t => results[t.id]?.result === 'PASS').length;
   const failCount = TESTS.filter(t => results[t.id]?.result === 'FAIL').length;

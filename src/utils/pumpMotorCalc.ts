@@ -352,7 +352,7 @@ export function generateBOM(inp: PumpMotorInputs, c: CalcValues): BOMItem[] {
 
   // ── Control Panel Components (common) ────────────────────
   add('Control Panel', 'Panel Enclosure',
-    `IP54 GRP/GI sheet, ${inp.panelSize}, powder coated RAL 7035, lockable, cable entry bottom`,
+    `IP54 GRP/GI sheet, ${c.panelSize}, powder coated RAL 7035, lockable, cable entry bottom`,
     qty, 'Nos', `${kw} kW ${sm} panel`);
   add('Control Panel', 'Control Transformer or SMPS',
     inp.controlVoltage === '230V AC'

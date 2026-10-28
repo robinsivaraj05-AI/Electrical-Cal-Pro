@@ -202,7 +202,7 @@ export function LoadSchedule() {
         <>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:24 }}>
             {result.values.map((v) => (
-              <KpiCard key={v.label} label={v.label} value={v.value} unit={v.unit} highlight={v.highlight} status={v.status} accentColor={ACCENT} />
+              <KpiCard key={v.label} label={v.label} value={String(v.value)} unit={v.unit} highlight={v.highlight} status={v.status} accentColor={ACCENT} />
             ))}
           </div>
 

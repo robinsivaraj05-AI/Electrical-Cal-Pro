@@ -30,7 +30,7 @@ function calcHarmonic(inputs: {
 
   const totalKva = linearKva + pulse6Kva + pulse12Kva + upsKva + smpsKva;
   if (totalKva <= 0) {
-    return { values: [], status: 'INFO', recommendation: 'Enter load values to calculate harmonics.', formula: '', steps: [] };
+    return { values: [], status: 'INFO', recommendation: 'Enter load values to calculate harmonics.', formula: '', steps: [], standardRef: { standard: '', clause: '', title: '' } };
   }
 
   // Fundamental current from each load type
@@ -129,7 +129,7 @@ function HarmonicChart({ values }: { values: CalculationResult['values'] }) {
   for (const h of orders) {
     const label = ['3rd','5th','7th','11th','13th','17th','19th'][orders.indexOf(h)];
     const v = values.find((x) => x.label.includes(label) || x.label.includes(`I${h}`));
-    currents[h] = v ? parseFloat(v.value) : 0;
+    currents[h] = v ? Number(v.value) : 0;
   }
   const max = Math.max(...Object.values(currents), 1);
   const colors: Record<number, string> = { 3:'#DB2777', 5:'#DC2626', 7:'#D97706', 11:'#7C3AED', 13:'#2563EB', 17:'#16A34A', 19:'#0D9488' };

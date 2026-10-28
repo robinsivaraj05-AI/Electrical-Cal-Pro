@@ -212,8 +212,8 @@ export function HVProtection() {
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button onClick={() => {
-          const rows = PROT_FUNCTIONS.map((p: {ansi:string;name:string;action:string;typicalSetting:string;standard:string;purpose:string;testProcedure:string}) => [p.ansi, p.name, p.action, p.typicalSetting, p.standard]);
-          const detail = PROT_FUNCTIONS.map((p: {ansi:string;name:string;purpose:string;testProcedure:string}) => [p.ansi, p.name, p.purpose, p.testProcedure]);
+          const rows = PROT_FUNCTIONS.map((p) => [p.ansi, p.name, p.principle, p.typicalSetting, p.standard]);
+          const detail = PROT_FUNCTIONS.map((p) => [p.ansi, p.name, p.purpose, p.testProcedure]);
           const body = `<h2>Protection Functions — Settings Summary</h2>${tableHTML(['ANSI','Function','Action','Typical Setting','Standard'], rows)}<h2>Purpose & Test Methods</h2>${tableHTML(['ANSI','Function','Purpose','Test Procedure'], detail)}`;
           downloadReport('11kV HV Protection System Report','25 Protection Functions — ANSI Device Numbers · Settings · Test Methods','IEC 60255 · IEEE C37.102 · IEC 62271-100 · NFPA 70B', body, 'HV-Protection-System.pdf');
         }} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>

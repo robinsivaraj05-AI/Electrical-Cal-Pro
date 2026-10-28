@@ -210,7 +210,7 @@ export function LightingCalc() {
 
   const reset = () => { setResult(null); };
 
-  const numFittings     = result ? parseInt(result.values.find((v) => v.label === 'Number of Luminaires')?.value ?? '0') : 0;
+  const numFittings     = result ? Number(result.values.find((v) => v.label === 'Number of Luminaires')?.value ?? 0) : 0;
   const requiredLumens  = result?.values.find((v) => v.label === 'Required Lumens')?.value ?? '—';
   const actualLux       = result?.values.find((v) => v.label === 'Actual Illuminance')?.value ?? '—';
   const lpd             = result?.values.find((v) => v.label === 'LPD')?.value ?? '—';
@@ -397,7 +397,7 @@ export function LightingCalc() {
           {activeTab === 'Results' && result && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               {result.values.map((v) => (
-                <KpiCard key={v.label} label={v.label} value={v.value} unit={v.unit}
+                <KpiCard key={v.label} label={v.label} value={String(v.value)} unit={v.unit}
                   color={v.status === 'PASS' ? '#22C55E' : v.status === 'FAIL' ? '#EF4444' : v.highlight ? '#60A5FA' : V.txt} />
               ))}
             </div>
