@@ -37,6 +37,7 @@ import { CableBOMPro }   from './components/modules/CableBOMPro';
 import { MCBSelection } from './components/modules/MCBSelection';
 import { RelayCoordination } from './components/modules/RelayCoordination';
 import { ArcFlashCalc } from './components/modules/ArcFlashCalc';
+import { SolarPVCalc } from './components/modules/SolarPVCalc';
 import { DGDashboard }   from './components/modules/DGDashboard';
 import { DGPerfCalc }    from './components/modules/DGPerfCalc';
 import { DGInspection }  from './components/modules/DGInspection';
@@ -119,7 +120,7 @@ const MODULE_COMPONENTS: Record<string, React.ReactNode> = {
   'pump-motor':   <PumpMotorCalc />,
   'conduit-tray': <ConduitTrayCalc />,
   hvac: <ComingSoon module="HVAC Electrical Design" />,
-  'solar-pv': <ComingSoon module="Solar PV Calculator" />,
+  'solar-pv': <SolarPVCalc />,
   wind: <ComingSoon module="Wind Power" />,
   'ev-charger': <ComingSoon module="EV Charger Design" />,
   'learning-center':   <LearningCenter />,
