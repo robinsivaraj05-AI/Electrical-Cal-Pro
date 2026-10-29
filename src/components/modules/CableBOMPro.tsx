@@ -144,6 +144,20 @@ const R2   = (n: number) => Math.round(n * 100) / 100;
 const SQRT3 = Math.sqrt(3);
 const uid  = () => Math.random().toString(36).slice(2, 9);
 
+// Typical cable reactance (mΩ/m at 50 Hz, multi-core) — IEC 60364-5-52 Annex B
+const CABLE_X_MOM = 0.08;
+
+// IEC 60364-5-52: ΔV = √3 × I × L × (R·cosφ + X·sinφ) / 1000  (3-phase)
+//                 ΔV = 2  × I × L × (R·cosφ + X·sinφ) / 1000  (1-phase)
+// r, x in mΩ/m; L in m; I in A → ΔV in V
+function calcVdrop(I: number, L: number, r: number, pf: number, phases: 1 | 3, voltage: number) {
+  const sinPhi = Math.sqrt(Math.max(0, 1 - pf * pf));
+  const mult = phases === 3 ? SQRT3 : 2;
+  const vdV   = R3(mult * I * L * (r * pf + CABLE_X_MOM * sinPhi) / 1000);
+  const vdPct = R3(vdV / voltage * 100);
+  return { vdV, vdPct };
+}
+
 function ampKey(ins: CableIns, cond: ConductorM): string { return `${ins}-${cond}`; }
 function odKey(ins: CableIns, cond: ConductorM, cores: string, armour: ArmourT): string {
   const c = cores.startsWith('4') ? '4C' : cores.startsWith('3') ? '3C' : '3C';
@@ -261,8 +275,7 @@ function calcMachine(m: Machine, proj: ProjectInfo): CalcResult {
   for (let i = chosenIdx; i < SIZES.length; i++) {
     if (!ampTable[i]) break;
     const r = resTable[i];
-    const vdV = R3(SQRT3 * currentPerRun * m.cableLength * r / 1000);
-    const vdPct = R3(vdV / m.voltage * 100);
+    const { vdPct } = calcVdrop(currentPerRun, m.cableLength, r, m.pf, m.phases, m.voltage);
     if (vdPct <= vdLimit) { finalIdx = i; break; }
     finalIdx = i;
     if (i === chosenIdx) notes.push(`Cable size stepped up from ${SIZES[chosenIdx]}mm² to satisfy VD ≤ ${vdLimit}%`);
@@ -272,8 +285,7 @@ function calcMachine(m: Machine, proj: ProjectInfo): CalcResult {
   const ratedAmpacity = ampTable[finalIdx] ?? 0;
   const deratedAmpacity = R3(ratedAmpacity * Ct * Cg * Ci);
   const r = resTable[finalIdx] ?? 0;
-  const vdVolts = R3(SQRT3 * currentPerRun * m.cableLength * r / 1000);
-  const vdPct   = R3(vdVolts / m.voltage * 100);
+  const { vdV: vdVolts, vdPct } = calcVdrop(currentPerRun, m.cableLength, r, m.pf, m.phases, m.voltage);
 
   // Step 6: Cable description
   const cores = m.coreConfig.startsWith('4') ? '4C' : '3C';
@@ -374,8 +386,7 @@ function applyOverride(c: CalcResult, m: Machine, newIdx: number): CalcResult {
   const newRatedA = ampTable[newIdx] ?? 0;
   const newDeratedA = R3(newRatedA * c.Ct * c.Cg * c.Ci);
   const newR = resTable[newIdx] ?? 0;
-  const newVdV = R3(SQRT3 * c.currentPerRun * m.cableLength * newR / 1000);
-  const newVdPct = R3(newVdV / m.voltage * 100);
+  const { vdV: newVdV, vdPct: newVdPct } = calcVdrop(c.currentPerRun, m.cableLength, newR, m.pf, m.phases, m.voltage);
   const newOD = odTable[newIdx] ?? 0;
   const { size: newGland, type: newGlandType } = getGland(newOD, m.armour === 'SWA');
   const newEarthSize = earthCableSize(newSize, m.earthCableMaterial === 'Al');
