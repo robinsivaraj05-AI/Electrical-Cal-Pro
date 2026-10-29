@@ -480,6 +480,14 @@ export function TransformerDistribution() {
     saveSnaps(updated);
   };
 
+  const updateProject = (id: string) => {
+    const updated = snaps.map(s =>
+      s.id === id ? { ...s, xfmr, feeders, savedAt: new Date().toISOString() } : s
+    );
+    setSnaps(updated);
+    saveSnaps(updated);
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
@@ -552,10 +560,13 @@ export function TransformerDistribution() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-                      <button onClick={() => loadProject(snap)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#22C55E', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                      <button onClick={() => loadProject(snap)} title="Load this project into the workspace" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#22C55E', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
                         <RefreshCw style={{ width: 11, height: 11 }} /> Load
                       </button>
-                      <button onClick={() => deleteSnap(snap.id)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#EF444422', color: '#EF4444', border: '1px solid #EF444433', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                      <button onClick={() => updateProject(snap.id)} title="Overwrite this project with the current design" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#F59E0B22', color: '#D97706', border: '1px solid #F59E0B55', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                        <Save style={{ width: 11, height: 11 }} /> Update
+                      </button>
+                      <button onClick={() => deleteSnap(snap.id)} title="Delete this project permanently" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#EF444422', color: '#EF4444', border: '1px solid #EF444433', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
                         <Trash2 style={{ width: 11, height: 11 }} /> Delete
                       </button>
                     </div>
