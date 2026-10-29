@@ -19,97 +19,176 @@ function nextStdRating(kva: number): number {
   return STD_RATINGS.find((r) => r >= kva) ?? kva;
 }
 
-// ── Starting kVA multiplier by method ─────────────────────────────────────────
-const START_MULTIPLIER: Record<string, number> = {
-  dol: 6.0,
-  'star-delta': 2.0,
-  'soft-starter': 1.5,
-  vfd: 1.0,
+// ── Starting kVA multiplier by method — typical values per IEC 60034-1 ────────
+// These represent industry-typical assumptions. Actual values depend on motor
+// design and must be verified against motor test data or manufacturer curves.
+const START_MULTIPLIER: Record<string, { mult: number; note: string }> = {
+  dol:          { mult: 6.0, note: 'DOL — IEC 60034-1 class IE2/IE3 typical 5.5–7× FLC; using 6×' },
+  'star-delta':  { mult: 2.0, note: 'Star-Delta — reduces starting current to 1/3 of DOL; effective multiplier ≈ 2×' },
+  'soft-starter':{ mult: 2.5, note: 'Soft-starter — current-limit setting 2–3× FLC (2.5× default); verify controller datasheet' },
+  vfd:           { mult: 1.1, note: 'VFD — controlled ramp, starting kVA ≈ rated kVA + 10% inverter overhead' },
 };
 
 function calcDG(inputs: {
   loadKva: number; loadPF: number; largestMotorKw: number;
   startMethod: string; altitude: number; ambientTemp: number;
   redundancy: string; diversityFactor: number;
+  // Manufacturer / site parameters — must be verified against product data
+  xdReactance: number;    // alternator sub-transient reactance X"d [%] — governs voltage dip
+  standbyRatio: number;   // standby uprating above prime [%] — manufacturer-specific (ISO 8528-1 §13)
+  allowableVdip: number;  // maximum allowable terminal voltage dip [%] — load/site requirement
 }): CalculationResult {
-  const { loadKva, loadPF, largestMotorKw, startMethod, altitude, ambientTemp, redundancy, diversityFactor } = inputs;
+  const {
+    loadKva, loadPF, largestMotorKw, startMethod, altitude, ambientTemp,
+    redundancy, diversityFactor, xdReactance, standbyRatio, allowableVdip,
+  } = inputs;
 
-  // 1. Running load after diversity
+  const startData = START_MULTIPLIER[startMethod] ?? START_MULTIPLIER.dol;
+  const startMult = startData.mult;
+
+  // ── 1. Running load after diversity ─────────────────────────────────────────
   const runningKva = loadKva * diversityFactor;
   const runningKw  = runningKva * loadPF;
 
-  // 2. Motor starting kVA
-  const motorFLC = largestMotorKw / (Math.sqrt(3) * 0.4 * 0.85);      // at 400V, PF=0.85
-  const startMult = START_MULTIPLIER[startMethod] ?? 6;
-  const startingKva = largestMotorKw * startMult / 0.85;              // kVA starting load
-  const transientLoadKva = runningKva + startingKva * 0.5;            // transient peak (starting adds 50%)
+  // ── 2. Motor starting kVA ────────────────────────────────────────────────────
+  // kVA_start = kW_motor × multiplier / running_PF
+  // Assumption: motor rated PF = 0.85 (typical IE2/IE3). Verify with motor nameplate.
+  const startingKva = largestMotorKw * startMult / 0.85;
 
-  // 3. Altitude derating: -3% per 300m above 1000m
-  const altDerate = altitude > 1000 ? 1 - ((altitude - 1000) / 300) * 0.03 : 1;
+  // ── 3. Transient peak demand (ISO 8528-2 load-acceptance basis) ───────────────
+  // Conservative approach: the full starting kVA steps onto the generator
+  // simultaneously with the running load (no 50 % credit — ISO 8528-2 §5.3.2).
+  const transientLoadKva = runningKva + startingKva;
 
-  // 4. Temperature derating: -1% per °C above 40°C
-  const tempDerate = ambientTemp > 40 ? 1 - (ambientTemp - 40) * 0.01 : 1;
+  // ── 4. Site derating ──────────────────────────────────────────────────────────
+  // Rates: 3 %/300 m above 1000 m (naturally aspirated diesel, ISO 3046-4).
+  // Turbocharged (TC/TCA) engines have lower derating — verify manufacturer curve.
+  const altDerate  = altitude > 1000 ? Math.max(0.5, 1 - ((altitude - 1000) / 300) * 0.03) : 1;
+  // 1 %/°C above 40 °C standard test (ISO 8528-1 §12.3). Verify with datasheet.
+  const tempDerate = ambientTemp > 40 ? Math.max(0.5, 1 - (ambientTemp - 40) * 0.01) : 1;
+  const derating   = altDerate * tempDerate;
 
-  const derating = altDerate * tempDerate;
+  // ── 5. Required prime kVA (site-derated) ─────────────────────────────────────
+  const requiredPrimeKva = transientLoadKva / derating;
 
-  // 5. Required prime rating (site-derated)
-  const requiredPrimeKva = Math.max(runningKva, transientLoadKva) / derating;
+  // ── 6. Required standby kVA using configurable prime-to-standby ratio ────────
+  // ISO 8528-1 §13: standby (ESP) rating is typically 10 % above prime (PRP).
+  // Actual ratio is manufacturer-dependent — must be confirmed from datasheet.
+  const requiredStandbyKva = requiredPrimeKva * (1 + standbyRatio / 100);
 
-  // 6. Standby rating is typically 10% above prime
-  const requiredStandbyKva = requiredPrimeKva * 1.1;
-
-  // 7. Redundancy
+  // ── 7. Redundancy and standard rating ─────────────────────────────────────────
   const unitsRequired = redundancy === 'N+1' ? 2 : redundancy === '2N' ? 2 : 1;
   const ratingPerUnit  = requiredStandbyKva / (unitsRequired === 2 && redundancy === 'N+1' ? 1 : unitsRequired);
   const stdRating      = nextStdRating(Math.ceil(ratingPerUnit));
 
-  // 8. Generator current at rated kVA
-  const voltage = 415;
+  // ── 8. Generator rated current ────────────────────────────────────────────────
+  const voltage    = 415;
   const genCurrent = (stdRating * 1000) / (Math.sqrt(3) * voltage);
 
-  // 9. Fuel consumption (diesel): approx 0.25 L/kWh at full load, 0.35 L/kWh at 75%, 0.50 L/kWh at 50%
-  const fuelFull = runningKw * 0.25;
-  const fuel75   = runningKw * 0.75 * 0.30;
+  // ── 9. Voltage dip check — transient performance verification ────────────────
+  // Simplified method (IEEE Std 446 / NFPA 110 Annex B):
+  //   ΔV% ≈ (kVA_start / kVA_gen) × X"d%
+  // This assumes the generator is driving only the starting motor (worst case).
+  // Accurate modelling requires the generator AVR transfer function and load
+  // characteristics — this is a screening check only.
+  const voltageDip    = (startingKva / stdRating) * xdReactance;   // % estimated dip
+  const vdipOk        = voltageDip <= allowableVdip;
+  const vdipMargin    = allowableVdip - voltageDip;
 
-  // 10. Status
-  const status = derating < 0.85 ? 'WARNING' : 'PASS';
+  // ── 10. Fuel consumption ──────────────────────────────────────────────────────
+  const fuelFull = runningKw * 0.27;          // ≈ 0.25–0.30 L/kWh at 100 % load
+  const fuel75   = runningKw * 0.75 * 0.32;   // ≈ 0.30–0.35 L/kWh at 75 % load
+
+  // ── Overall status ────────────────────────────────────────────────────────────
+  // This function produces a PRELIMINARY ESTIMATE only. 'PASS' is never returned
+  // because transient performance, load sequence, AVR/governor response and
+  // frequency dip all require manufacturer-specific data and dynamic simulation.
+  const overallStatus: CalculationResult['status'] =
+    !vdipOk          ? 'WARNING' :   // voltage dip exceeds site limit — generator too small
+    derating < 0.85  ? 'WARNING' :   // severe site derating (> 15 %) — confirm with supplier
+    'INFO';                          // preliminary estimate looks feasible — validate with manufacturer
+
+  const pendingChecks = [
+    `Voltage recovery time — depends on AVR type (static / PMG) and response speed; not calculable here`,
+    `Frequency dip and recovery — depends on governor class (ISO 8528-5 G1–G4); specify G3 or better for sensitive loads`,
+    `Load acceptance / rejection steps — confirm engine can accept ${transientLoadKva.toFixed(0)} kVA in a single step (ISO 8528-2 §5.3)`,
+    `Actual derating curve — above values assume naturally aspirated diesel; turbocharged engines derate less`,
+    `Actual prime-to-standby ratio — ${standbyRatio}% assumed; confirm from manufacturer datasheet`,
+  ];
 
   return {
     values: [
-      { label: 'Running Load',          value: runningKva.toFixed(1),         unit: 'kVA',  highlight: false },
-      { label: 'Motor Starting kVA',    value: startingKva.toFixed(1),        unit: 'kVA',  highlight: false },
-      { label: 'Derating Factor',       value: (derating * 100).toFixed(1),   unit: '%',    status: derating < 0.9 ? 'WARNING' : 'PASS' },
-      { label: 'Required Prime Rating', value: requiredPrimeKva.toFixed(1),   unit: 'kVA',  highlight: true },
-      { label: 'Recommended Standard',  value: stdRating.toString(),           unit: 'kVA',  highlight: true, status },
-      { label: 'Units Required',        value: `${unitsRequired} × ${stdRating}`, unit: 'kVA' },
-      { label: 'Generator Current',     value: genCurrent.toFixed(1),         unit: 'A' },
-      { label: 'Fuel (Full Load)',       value: fuelFull.toFixed(1),           unit: 'L/hr' },
-      { label: 'Fuel (75% Load)',        value: fuel75.toFixed(1),             unit: 'L/hr' },
+      { label: 'Running Load',              value: runningKva.toFixed(1),           unit: 'kVA'  },
+      { label: 'Motor Starting kVA',        value: startingKva.toFixed(1),          unit: 'kVA',  status: 'INFO'  },
+      { label: 'Transient Peak Demand',     value: transientLoadKva.toFixed(1),      unit: 'kVA',  highlight: true },
+      { label: 'Site Derating Factor',      value: (derating * 100).toFixed(1),      unit: '%',    status: derating < 0.9 ? 'WARNING' : 'PASS' },
+      { label: 'Required Prime kVA',        value: requiredPrimeKva.toFixed(1),      unit: 'kVA',  highlight: true },
+      { label: 'Preliminary Rating',        value: `${unitsRequired} × ${stdRating}`, unit: 'kVA', highlight: true, status: overallStatus },
+      { label: 'Starting Method Mult.',     value: `${startMult}×`,                  unit: 'FLC',  status: 'INFO'  },
+      { label: 'Estimated Voltage Dip',     value: voltageDip.toFixed(1),            unit: '%',    status: vdipOk ? (vdipMargin < 3 ? 'WARNING' : 'PASS') : 'FAIL' },
+      { label: 'Allowable Voltage Dip',     value: allowableVdip.toFixed(0),         unit: '%'    },
+      { label: 'Voltage Dip Check',         value: vdipOk ? 'FEASIBLE' : 'EXCEEDS LIMIT', unit: '', status: vdipOk ? 'PASS' : 'FAIL' },
+      { label: 'Generator Current',         value: genCurrent.toFixed(1),            unit: 'A'    },
+      { label: 'Fuel (Full Load)',           value: fuelFull.toFixed(1),              unit: 'L/hr' },
+      { label: 'Fuel (75% Load)',            value: fuel75.toFixed(1),               unit: 'L/hr' },
     ],
-    status,
-    recommendation: `Select ${unitsRequired} × ${stdRating} kVA generator set(s) in ${redundancy} configuration. Site derating factor: ${(derating * 100).toFixed(1)}% (altitude ${altitude} m, ${ambientTemp}°C). Motor starting (${startMethod.toUpperCase()}) adds ${startingKva.toFixed(0)} kVA transient. Fuel tank sizing: assume 8-hour autonomy at 75% load = ${(fuel75 * 8).toFixed(0)} litres.`,
-    formula: 'G_rating = (Load_kVA × DF + Start_kVA × 0.5) ÷ (Alt_derate × Temp_derate)',
+    status: overallStatus,
+    recommendation: [
+      `⚠ PRELIMINARY ESTIMATE — confirm all figures with generator manufacturer before purchasing or specifying.`,
+      `Preliminary selection: ${unitsRequired} × ${stdRating} kVA (${redundancy}). Site derating: ${(derating * 100).toFixed(1)}% (${altitude} m, ${ambientTemp}°C). Starting method: ${startMethod} (${startMult}× assumed).`,
+      vdipOk
+        ? `Voltage dip check: estimated ΔV = ${voltageDip.toFixed(1)}% against ${allowableVdip}% limit — FEASIBLE (X"d = ${xdReactance}%).${vdipMargin < 3 ? ' Margin is small — verify with manufacturer dynamic model.' : ''}`
+        : `⚠ Voltage dip check: estimated ΔV = ${voltageDip.toFixed(1)}% EXCEEDS ${allowableVdip}% limit — increase generator rating, reduce motor starting kVA or reduce X"d. (X"d = ${xdReactance}% assumed.)`,
+      `Pending manufacturer confirmation: ${pendingChecks.length} items — see Step 10.`,
+    ].join('  '),
+    formula: 'G_kVA = (kVA_run + kVA_start) ÷ (k_alt × k_temp) × (1 + standby%/100)',
     steps: [
-      { step: 1, description: 'Running load after diversity',      formula: `kVA_run = ${loadKva} × ${diversityFactor}`,                             result: `${runningKva.toFixed(1)} kVA` },
-      { step: 2, description: 'Motor starting kVA',                formula: `kVA_start = ${largestMotorKw} kW × ${startMult} ÷ 0.85`,                result: `${startingKva.toFixed(1)} kVA` },
-      { step: 3, description: 'Transient peak load',               formula: `kVA_peak = ${runningKva.toFixed(1)} + ${startingKva.toFixed(1)} × 0.5`,  result: `${transientLoadKva.toFixed(1)} kVA` },
-      { step: 4, description: 'Altitude derating',                 formula: `k_alt = 1 − ((${altitude} − 1000)/300) × 0.03`,                          result: `${(altDerate * 100).toFixed(1)} %` },
-      { step: 5, description: 'Temperature derating',              formula: `k_temp = 1 − (${ambientTemp} − 40) × 0.01`,                               result: `${(tempDerate * 100).toFixed(1)} %` },
-      { step: 6, description: 'Required prime kVA (site-derated)', formula: `kVA_req = ${transientLoadKva.toFixed(1)} ÷ ${derating.toFixed(3)}`,        result: `${requiredPrimeKva.toFixed(1)} kVA` },
-      { step: 7, description: 'Next standard rating',              formula: `Round up to nearest standard kVA`,                                         result: `${stdRating} kVA` },
-      { step: 8, description: 'Generator rated current',           formula: `I = ${stdRating}×1000 ÷ (√3 × ${voltage})`,                               result: `${genCurrent.toFixed(1)} A` },
+      { step: 1,  description: 'Running load after diversity factor',
+        formula:  `kVA_run = ${loadKva} × ${diversityFactor}`,
+        result:   `${runningKva.toFixed(1)} kVA` },
+      { step: 2,  description: `Motor starting kVA (${startData.note})`,
+        formula:  `kVA_start = ${largestMotorKw} kW × ${startMult} ÷ 0.85  [assumed motor PF = 0.85 — verify nameplate]`,
+        result:   `${startingKva.toFixed(1)} kVA` },
+      { step: 3,  description: 'Transient peak demand — ISO 8528-2 §5.3.2 load acceptance (100% step)',
+        formula:  `kVA_peak = kVA_run + kVA_start = ${runningKva.toFixed(1)} + ${startingKva.toFixed(1)}  [conservative: full step, no credit]`,
+        result:   `${transientLoadKva.toFixed(1)} kVA` },
+      { step: 4,  description: 'Altitude derating — ISO 3046-4 (naturally aspirated diesel assumed; turbocharged engines derate less)',
+        formula:  `k_alt = 1 − ((${altitude} − 1000)/300) × 3%`,
+        result:   `${(altDerate * 100).toFixed(1)}%` },
+      { step: 5,  description: 'Temperature derating — ISO 8528-1 §12.3 (1%/°C above 40°C)',
+        formula:  `k_temp = 1 − (${ambientTemp} − 40) × 1%`,
+        result:   `${(tempDerate * 100).toFixed(1)}%` },
+      { step: 6,  description: 'Required prime kVA (site-derated)',
+        formula:  `kVA_prime = ${transientLoadKva.toFixed(1)} ÷ ${derating.toFixed(3)}`,
+        result:   `${requiredPrimeKva.toFixed(1)} kVA` },
+      { step: 7,  description: `Required standby kVA (prime + ${standbyRatio}% — assumed; verify from manufacturer datasheet)`,
+        formula:  `kVA_standby = ${requiredPrimeKva.toFixed(1)} × (1 + ${standbyRatio}/100)`,
+        result:   `${requiredStandbyKva.toFixed(1)} kVA` },
+      { step: 8,  description: 'Round up to nearest standard rating and calculate rated current',
+        formula:  `Next std ≥ ${Math.ceil(ratingPerUnit)} kVA;  I = ${stdRating}×1000 ÷ (√3 × ${voltage})`,
+        result:   `${stdRating} kVA — ${genCurrent.toFixed(1)} A` },
+      { step: 9,  description: `Voltage dip screening check — simplified method (IEEE Std 446 / NFPA 110 Annex B)`,
+        formula:  `ΔV% ≈ (kVA_start / kVA_gen) × X"d% = (${startingKva.toFixed(1)} / ${stdRating}) × ${xdReactance}%  [X"d = ${xdReactance}% assumed — obtain from alternator datasheet]`,
+        result:   `ΔV ≈ ${voltageDip.toFixed(1)}%  ${vdipOk ? `≤ ${allowableVdip}% limit — FEASIBLE` : `> ${allowableVdip}% limit — EXCEEDS`}` },
+      { step: 10, description: 'Verification checklist — items requiring manufacturer data before finalising',
+        formula:  pendingChecks.map((c, i) => `${i + 1}. ${c}`).join('  |  '),
+        result:   `${pendingChecks.length} items pending — result is PRELIMINARY ESTIMATE` },
     ],
-    standardRef: { standard: 'IEC 60034-1 / ISO 8528', clause: 'Clause 13 (Rating)', title: 'Reciprocating internal combustion engine driven alternating current generating sets' },
+    standardRef: {
+      standard: 'ISO 8528-1 / ISO 8528-2 / IEC 60034-1',
+      clause:   '§13 (Ratings) / §5.3 (Load acceptance) / Clause 13',
+      title:    'Reciprocating IC engine driven AC generating sets — preliminary sizing',
+    },
   };
 }
 
 const WHY_ITEMS = [
-  { title: 'Standby Power',       desc: 'Generator provides essential power during utility outage — sized for maximum demand including motor starting transients' },
-  { title: 'Motor Starting kVA',  desc: 'DOL motor starting draws 6–8× FLC — the generator must supply the starting kVA without excessive voltage dip (< 15% for sensitive loads)' },
-  { title: 'Altitude Derating',   desc: 'Air density falls at altitude — engine breathes less oxygen, reducing output. Derate 3% per 300m above 1000m for naturally aspirated engines' },
-  { title: 'Temperature Derating',desc: 'Higher ambient temperature reduces intercooler and alternator cooling efficiency. Derate 1% per °C above 40°C standard test condition' },
-  { title: 'Fuel System Sizing',  desc: 'Daily/service tank must hold 8–24 hours of fuel at 75% load. Bulk storage tank sized for the utility outage duration (days or weeks)' },
-  { title: 'N+1 Redundancy',      desc: 'Critical facilities use N+1 (two sets, either capable of full load) — prevents complete power loss if one generator fails to start' },
+  { title: 'Preliminary Estimate', desc: 'This calculator produces a first-pass sizing estimate only. All multipliers and derating rates are industry-typical assumptions — actual values depend on alternator sub-transient reactance, engine governor class, and manufacturer test data. Confirm final rating with the supplier.' },
+  { title: 'Motor Starting kVA',   desc: 'DOL motor starting draws 5.5–7× FLC — the exact multiplier depends on motor design and must be verified from the motor test certificate. The generator must supply this kVA without the terminal voltage dipping beyond the site limit (typically 15% for general loads, 10% for sensitive equipment).' },
+  { title: 'Voltage Dip (X″d)',    desc: 'Terminal voltage dip during motor starting is controlled by the alternator sub-transient reactance X″d. Lower X″d = smaller dip. Typical brushless alternators: 10–15%. This calculator uses a simplified screening formula — accurate assessment requires a dynamic simulation with the AVR transfer function.' },
+  { title: 'Site Derating',        desc: 'Derating rates assume a naturally aspirated (NA) diesel engine at ISO 8528-1 / ISO 3046-4 standard conditions. Turbocharged (TC) and turbocharged-aftercooled (TCA) engines have much lower altitude derating. Always obtain the derating curve from the specific engine/alternator manufacturer.' },
+  { title: 'Prime vs Standby',     desc: 'ISO 8528-1 defines Prime (PRP) for unlimited variable-load running and Standby (ESP) for ≤500 hr/year emergency use. The standby-to-prime ratio varies by manufacturer (typically 5–15%). Do not assume 10% without confirming the specific product datasheet.' },
+  { title: 'N+1 Redundancy',       desc: 'Critical facilities use N+1 (two sets, either capable of full load) — prevents complete power loss if one generator fails to start. For tier-III/IV data centres, use 2N (two fully independent systems, each capable of full load).' },
 ];
 
 const NOTES = [
@@ -140,6 +219,10 @@ export function DGCalc() {
   const [ambientTemp,    setTemp]     = useState('40');
   const [redundancy,     setRedun]    = useState('N+1');
   const [diversityFactor,setDF]       = useState('0.80');
+  // Manufacturer / site parameters
+  const [xdReactance,    setXd]       = useState('12');
+  const [standbyRatio,   setStdby]    = useState('10');
+  const [allowableVdip,  setVdip]     = useState('15');
   const [result,         setResult]   = useState<CalculationResult | null>(null);
   const [learningMode,   setLM]       = useState(true);
 
@@ -149,19 +232,22 @@ export function DGCalc() {
       largestMotorKw: parseFloat(largestMotorKw), startMethod,
       altitude: parseFloat(altitude), ambientTemp: parseFloat(ambientTemp),
       redundancy, diversityFactor: parseFloat(diversityFactor),
+      xdReactance: parseFloat(xdReactance),
+      standbyRatio: parseFloat(standbyRatio),
+      allowableVdip: parseFloat(allowableVdip),
     });
     setResult(res);
     addCalculation({
       type: 'dg', title: `DG Generator — ${loadKva} kVA load, ${altitude}m altitude`,
-      inputs: { loadKva, loadPF, largestMotorKw, startMethod, altitude, ambientTemp, redundancy },
-      results: res, notes: '', standard: 'IEC 60034 / ISO 8528',
+      inputs: { loadKva, loadPF, largestMotorKw, startMethod, altitude, ambientTemp, redundancy, xdReactance, standbyRatio, allowableVdip },
+      results: res, notes: '', standard: 'ISO 8528 / IEC 60034',
     });
   };
 
   return (
     <div className="animate-fadeIn" style={{ fontFamily: "'Inter','Segoe UI',sans-serif" }}>
       <ModHeader icon={Cpu} title="DG GENERATOR SIZING CALCULATOR"
-        subtitle="ISO 8528 / IEC 60034 · Prime rating, starting kVA, derating factors, fuel consumption"
+        subtitle="ISO 8528 / IEC 60034 · Preliminary sizing — validate all assumptions with manufacturer before finalising"
         accentColor={ACCENT} />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
@@ -183,20 +269,20 @@ export function DGCalc() {
             <SelectInput label="Starting Method" value={startMethod}
               onChange={setStart}
               options={[
-                { value: 'dol',          label: 'DOL — 6× starting' },
-                { value: 'star-delta',   label: 'Star-Delta — 2× starting' },
-                { value: 'soft-starter', label: 'Soft Starter — 1.5×' },
-                { value: 'vfd',          label: 'VFD — 1× (no surge)' },
+                { value: 'dol',          label: 'DOL — 6× (typical)' },
+                { value: 'star-delta',   label: 'Star-Delta — 2×' },
+                { value: 'soft-starter', label: 'Soft Starter — 2.5×' },
+                { value: 'vfd',          label: 'VFD — 1.1×' },
               ]}
-              tooltip="Motor starting method determines the starting kVA demand on the generator" />
+              tooltip="Multipliers are typical values (IEC 60034-1). Verify against motor test certificate or manufacturer curve." />
           </FieldRow>
 
           <SectionLabel title="Site Conditions" />
           <FieldRow cols="1fr 1fr">
             <TextInput label="Site Altitude" value={altitude} onChange={setAlt} unit="m" min={0} max={5000}
-              tooltip="Elevation above sea level — derates output above 1000m" />
+              tooltip="Elevation above sea level — derates output above 1000 m (ISO 3046-4). Rate assumes naturally aspirated engine." />
             <TextInput label="Ambient Temperature" value={ambientTemp} onChange={setTemp} unit="°C" min={-10} max={55}
-              tooltip="Maximum ambient temperature at generator location — derates above 40°C" />
+              tooltip="Maximum ambient temperature — derates above 40°C (ISO 8528-1 §12.3). Verify with manufacturer for intercooled engines." />
           </FieldRow>
 
           <SectionLabel title="Redundancy" />
@@ -208,7 +294,17 @@ export function DGCalc() {
             ]}
             tooltip="N+1: two generators sized for full load — any one can fail. 2N: two completely independent systems" />
 
-          <CalcButton onClick={calculate} label="Calculate Generator Size" icon={Cpu} accentColor={ACCENT} />
+          <SectionLabel title="Manufacturer / Site Parameters" />
+          <FieldRow cols="1fr 1fr 1fr">
+            <TextInput label="X″d (sub-transient)" value={xdReactance} onChange={setXd} unit="%" min={5} max={30} step={0.5}
+              tooltip="Alternator sub-transient reactance — governs voltage dip on motor starting. Typical: 10–15% for brushless alternators. Must be obtained from alternator datasheet." />
+            <TextInput label="Prime→Standby Uprating" value={standbyRatio} onChange={setStdby} unit="%" min={5} max={20}
+              tooltip="How much the standby (ESP) rating exceeds the prime (PRP) rating. ISO 8528-1 typical: 10%. Must be confirmed from manufacturer datasheet — varies 5–15%." />
+            <TextInput label="Max Voltage Dip" value={allowableVdip} onChange={setVdip} unit="%" min={5} max={30}
+              tooltip="Site/load voltage dip limit during motor starting. General loads: 15%. Sensitive electronics: 10%. IT equipment / UPS: 5%. Motor control panels: 10–15%." />
+          </FieldRow>
+
+          <CalcButton onClick={calculate} label="Calculate (Preliminary Estimate)" icon={Cpu} accentColor={ACCENT} />
         </InputPanel>
 
         <ResultPanel result={result} learningMode={learningMode} setLearningMode={setLM} accentColor={ACCENT} />
