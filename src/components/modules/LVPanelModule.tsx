@@ -6,11 +6,12 @@ import {
   Plus, Pencil, Trash2, Search, CheckCircle, XCircle, Clock,
   ChevronRight, ChevronDown, RefreshCw, AlertCircle,
 } from 'lucide-react';
-import { useLVPanelStore, FEEDER_INSTALL_STATUSES } from '../../store/useLVPanelStore';
+import { useLVPanelStore, FEEDER_INSTALL_STATUSES, SITE_VERIF_STATUSES } from '../../store/useLVPanelStore';
 import type {
   LVPanel, LVFeeder, LVLoad, LVMeter, LVDrawing, LVInspection, LVDocument,
   LVCalcRecord, LVSwitchingRecord, LVBreakerState,
   MeteringPriority, EmsStatus, CalcType, VerificationStatus,
+  SiteVerifStatus, CheckResult, LVAuditEntry, LVImportBatch,
 } from '../../store/useLVPanelStore';
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
@@ -2465,114 +2466,273 @@ function Documents() {
 
 // ─── SECTION: Inspection ──────────────────────────────────────────────────────
 
-const INSP_DEFAULTS: Omit<LVInspection, 'id'> = {
-  panelId: '', inspectionDate: new Date().toISOString().slice(0, 10),
-  inspector: '', type: 'Visual', status: 'Pending',
-  findings: '', actionRequired: '', remarks: '',
+const CHECK_ITEMS: { key: keyof LVInspection; label: string }[] = [
+  { key: 'cableSizeVerified',       label: 'Cable Size' },
+  { key: 'breakerRatingVerified',   label: 'Breaker Rating' },
+  { key: 'cableTerminationStatus',  label: 'Cable Termination' },
+  { key: 'cableTaggingStatus',      label: 'Cable Tagging' },
+  { key: 'earthingVerified',        label: 'Earthing' },
+  { key: 'meterInstallVerified',    label: 'Meter Install' },
+  { key: 'drawingCompliance',       label: 'Drawing Compliance' },
+];
+
+const INSP_TYPES = ['Visual', 'Functional', 'Commissioning', 'Cable', 'Metering', 'Post-Installation', 'Reinspection'];
+
+const INSP_DEFAULTS: Omit<LVInspection, 'id' | 'createdAt' | 'updatedAt' | 'auditTrail'> = {
+  panelId: '', feederId: '',
+  inspectionDate: new Date().toISOString().slice(0, 10),
+  inspector: '', inspectionType: 'Visual',
+  cableSizeVerified: 'Pending', breakerRatingVerified: 'Pending',
+  cableTerminationStatus: 'Pending', cableTaggingStatus: 'Pending',
+  earthingVerified: 'Pending', meterInstallVerified: 'Pending',
+  drawingCompliance: 'Pending', photographicEvidence: [],
+  observations: '', correctiveActions: '', responsiblePerson: '',
+  targetCompletionDate: '', closureDate: '', status: 'Pending',
 };
 
+function CheckBadge({ val }: { val: CheckResult }) {
+  const color = val === 'Pass' ? '#22C55E' : val === 'Fail' ? '#EF4444' : val === 'N/A' ? '#64748B' : '#F59E0B';
+  return <span style={{ background: color + '22', color, border: `1px solid ${color}55`, borderRadius: 4, padding: '1px 6px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{val}</span>;
+}
+
 function Inspection() {
-  const { inspections, addInspection, updateInspection, deleteInspection } = useLVPanelStore();
+  const { inspections, panels, addInspection, updateInspection, deleteInspection } = useLVPanelStore();
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState<Omit<LVInspection, 'id'>>(INSP_DEFAULTS);
+  const [form, setForm] = useState<Omit<LVInspection, 'id' | 'createdAt' | 'updatedAt' | 'auditTrail'>>(INSP_DEFAULTS);
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterPanel, setFilterPanel] = useState('');
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showAudit, setShowAudit] = useState<string | null>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
+  const [changedFields, setChangedFields] = useState<Record<string, string>>({});
 
-  const setF = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
-  const openEdit = (x: LVInspection) => { const { id, ...rest } = x; setForm(rest); setEditId(id); setShowForm(true); };
+  const panelIds = [...new Set(panels.map(p => p.panelId))].sort();
+  const setF = (k: keyof typeof form, v: unknown) => setForm(f => ({ ...f, [k]: v }));
+
+  const openAdd = () => { setForm(INSP_DEFAULTS); setEditId(null); setChangedFields({}); setShowForm(true); };
+  const openEdit = (x: LVInspection) => {
+    const { id, createdAt, updatedAt, auditTrail, ...rest } = x;
+    setForm(rest); setEditId(id); setChangedFields({}); setShowForm(true);
+  };
   const save = () => {
-    if (editId) updateInspection(editId, form); else addInspection(form);
+    if (editId) {
+      const existing = inspections.find(x => x.id === editId);
+      if (existing) {
+        const entries: LVAuditEntry[] = Object.entries(form)
+          .filter(([k, v]) => String((existing as Record<string, unknown>)[k] ?? '') !== String(v))
+          .map(([k, v]) => ({ timestamp: new Date().toISOString(), changedBy: 'User', field: k, previousValue: String((existing as Record<string, unknown>)[k] ?? ''), newValue: String(v) }));
+        updateInspection(editId, { ...form, auditTrail: [...(existing.auditTrail ?? []), ...entries] });
+      }
+    } else {
+      addInspection({ ...form, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), auditTrail: [] });
+    }
     setShowForm(false);
   };
 
-  const visible = filterStatus ? inspections.filter(x => x.status === filterStatus) : inspections;
-  const passed = inspections.filter(x => x.status === 'Passed').length;
-  const failed = inspections.filter(x => x.status === 'Failed').length;
-  const pending = inspections.filter(x => x.status === 'Pending').length;
+  const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = file.size <= 512 * 1024 ? (ev.target?.result as string) : undefined;
+      setF('photographicEvidence', [...(form.photographicEvidence ?? []), { name: file.name, size: file.size, type: file.type, uploadedAt: new Date().toISOString(), dataUrl }]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const exportXLSX = () => {
+    const rows = visible.map(x => ({
+      'Panel': x.panelId, 'Feeder': x.feederId, 'Date': x.inspectionDate, 'Inspector': x.inspector,
+      'Type': x.inspectionType, 'Status': x.status,
+      'Cable Size': x.cableSizeVerified, 'Breaker Rating': x.breakerRatingVerified,
+      'Termination': x.cableTerminationStatus, 'Tagging': x.cableTaggingStatus,
+      'Earthing': x.earthingVerified, 'Meter': x.meterInstallVerified, 'Drawing': x.drawingCompliance,
+      'Observations': x.observations, 'Corrective Actions': x.correctiveActions,
+      'Responsible': x.responsiblePerson, 'Target Date': x.targetCompletionDate, 'Closed': x.closureDate,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inspection Register'); XLSX.writeFile(wb, 'inspection_register.xlsx');
+  };
+
+  const visible = inspections.filter(x =>
+    (!filterStatus || x.status === filterStatus) &&
+    (!filterPanel || x.panelId === filterPanel)
+  );
+
+  const kpis = SITE_VERIF_STATUSES.map(s => ({ status: s, count: inspections.filter(x => x.status === s).length }));
+  const outstanding = inspections.filter(x => ['Observation Raised','Corrective Action Pending'].includes(x.status)).length;
 
   return (
     <div>
-      <SectionHeader title="Inspection & Site Verification" subtitle="Site inspection records and action tracking" icon={ClipboardList} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
-        <KpiCard value={passed} label="Passed" color="#22C55E" icon={CheckCircle} />
-        <KpiCard value={failed} label="Failed" color="#EF4444" icon={XCircle} />
-        <KpiCard value={pending} label="Pending" color="#F59E0B" icon={Clock} />
+      <SectionHeader title="Inspection & Site Verification" subtitle="Site verification register, check results, corrective actions and audit trail" icon={ClipboardList} />
+
+      {/* KPI strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
+        <KpiCard value={inspections.length} label="Total Records" color={ACCENT} icon={ClipboardList} />
+        <KpiCard value={inspections.filter(x => x.status === 'Verified' || x.status === 'Closed').length} label="Verified / Closed" color="#22C55E" icon={CheckCircle} />
+        <KpiCard value={outstanding} label="Outstanding" sub="observation raised / CA pending" color="#EF4444" icon={AlertCircle} />
+        <KpiCard value={inspections.filter(x => x.status === 'Pending').length} label="Pending" color="#F59E0B" icon={Clock} />
       </div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
-        <button style={btn(ACCENT)} onClick={() => { setForm(INSP_DEFAULTS); setEditId(null); setShowForm(true); }}>
-          <Plus style={{ width: 14, height: 14 }} /> Add Inspection
-        </button>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={input({ width: 150 })}>
-          <option value="">All Statuses</option>
-          {['Pending','Passed','Failed','Conditional'].map(s => <option key={s}>{s}</option>)}
+
+      {/* Status mini-strip */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+        {kpis.map(({ status, count }) => (
+          <button key={status} onClick={() => setFilterStatus(filterStatus === status ? '' : status)}
+            style={{ padding: '4px 12px', borderRadius: 20, border: `1px solid var(--ec-border)`, fontSize: 11, fontWeight: 600, cursor: 'pointer', background: filterStatus === status ? ACCENT : 'var(--ec-bg-surface)', color: filterStatus === status ? '#fff' : 'var(--ec-text-secondary)' }}>
+            {status} ({count})
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={filterPanel} onChange={e => setFilterPanel(e.target.value)} style={input({ width: 150 })}>
+          <option value="">All Panels</option>
+          {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
         </select>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Inspection</button>
+          {visible.length > 0 && <button style={btn('#22C55E')} onClick={exportXLSX}><Download style={{ width: 14, height: 14 }} /> Export</button>}
+        </div>
       </div>
+
       {showForm && (
         <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{editId ? 'Edit' : 'Add'} Inspection</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
-            <div><div style={label}>Panel ID</div><input value={form.panelId} onChange={e => setF('panelId', e.target.value)} style={input()} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10, marginBottom: 14 }}>
+            <div>
+              <div style={label}>Panel ID</div>
+              <select value={form.panelId} onChange={e => setF('panelId', e.target.value)} style={input()}>
+                <option value="">— Select —</option>
+                {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+              </select>
+            </div>
+            <div><div style={label}>Feeder ID</div><input value={form.feederId} onChange={e => setF('feederId', e.target.value)} style={input()} /></div>
             <div><div style={label}>Inspection Date</div><input type="date" value={form.inspectionDate} onChange={e => setF('inspectionDate', e.target.value)} style={input()} /></div>
             <div><div style={label}>Inspector</div><input value={form.inspector} onChange={e => setF('inspector', e.target.value)} style={input()} /></div>
             <div>
-              <div style={label}>Type</div>
-              <select value={form.type} onChange={e => setF('type', e.target.value)} style={input()}>
-                {['Visual','Functional','Commissioning'].map(t => <option key={t}>{t}</option>)}
+              <div style={label}>Inspection Type</div>
+              <select value={form.inspectionType} onChange={e => setF('inspectionType', e.target.value)} style={input()}>
+                {INSP_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
-            <div>
-              <div style={label}>Status</div>
-              <select value={form.status} onChange={e => setF('status', e.target.value)} style={input()}>
-                {['Pending','Passed','Failed','Conditional'].map(s => <option key={s}>{s}</option>)}
-              </select>
-            </div>
-            <div style={{ gridColumn: 'span 3' }}><div style={label}>Findings</div><input value={form.findings} onChange={e => setF('findings', e.target.value)} style={input()} /></div>
-            <div style={{ gridColumn: 'span 2' }}><div style={label}>Action Required</div><input value={form.actionRequired} onChange={e => setF('actionRequired', e.target.value)} style={input()} /></div>
-            <div style={{ gridColumn: 'span 2' }}><div style={label}>Remarks</div><input value={form.remarks} onChange={e => setF('remarks', e.target.value)} style={input()} /></div>
           </div>
+
+          {/* 7 check items */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--ec-text-secondary)' }}>Site Verification Checks</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+              {CHECK_ITEMS.map(({ key, label: lbl }) => (
+                <div key={key}>
+                  <div style={label}>{lbl}</div>
+                  <select value={form[key] as string} onChange={e => setF(key, e.target.value as CheckResult)} style={input()}>
+                    {(['Pass','Fail','N/A','Pending'] as CheckResult[]).map(v => <option key={v}>{v}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 12 }}>
+            <div style={{ gridColumn: 'span 3' }}><div style={label}>Observations</div><input value={form.observations} onChange={e => setF('observations', e.target.value)} style={input()} /></div>
+            <div style={{ gridColumn: 'span 3' }}><div style={label}>Corrective Actions Required</div><input value={form.correctiveActions} onChange={e => setF('correctiveActions', e.target.value)} style={input()} /></div>
+            <div><div style={label}>Responsible Person</div><input value={form.responsiblePerson} onChange={e => setF('responsiblePerson', e.target.value)} style={input()} /></div>
+            <div><div style={label}>Target Completion Date</div><input type="date" value={form.targetCompletionDate} onChange={e => setF('targetCompletionDate', e.target.value)} style={input()} /></div>
+            <div><div style={label}>Closure Date</div><input type="date" value={form.closureDate} onChange={e => setF('closureDate', e.target.value)} style={input()} /></div>
+            <div style={{ gridColumn: 'span 2' }}>
+              <div style={label}>Inspection Status</div>
+              <select value={form.status} onChange={e => setF('status', e.target.value as SiteVerifStatus)} style={input()}>
+                {SITE_VERIF_STATUSES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={label}>Photographic Evidence</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button style={btn('#475569')} onClick={() => photoRef.current?.click()}><Upload style={{ width: 13, height: 13 }} /> Add Photo</button>
+              <input ref={photoRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
+              <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Images ≤ 500 KB stored with preview</span>
+            </div>
+            {form.photographicEvidence && form.photographicEvidence.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                {form.photographicEvidence.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    {p.dataUrl
+                      ? <img src={p.dataUrl} alt={p.name} style={{ width: 72, height: 54, objectFit: 'cover', borderRadius: 5 }} />
+                      : <div style={{ width: 72, height: 54, background: 'var(--ec-bg-surface)', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: 'var(--ec-text-muted)' }}>📎 {p.name.slice(0, 8)}</div>}
+                    <button style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 10 }} onClick={() => setF('photographicEvidence', form.photographicEvidence.filter((_, j) => j !== i))}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={btn(ACCENT)} onClick={save}><CheckCircle style={{ width: 13, height: 13 }} /> Save</button>
             <button style={btn('#475569')} onClick={() => setShowForm(false)}>Cancel</button>
           </div>
         </div>
       )}
+
       {visible.length === 0
-        ? <EmptyState icon={ClipboardList} title="No inspections" sub="Record site inspections and verification results." />
-        : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>{['Panel','Date','Inspector','Type','Status','Findings','Action Required','Remarks','Actions'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-              <tbody>
-                {visible.map((x, i) => (
-                  <tr key={x.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                    <td style={td({ color: ACCENT, fontWeight: 700 })}>{x.panelId}</td>
-                    <td style={td()}>{x.inspectionDate}</td>
-                    <td style={td()}>{x.inspector}</td>
-                    <td style={td()}>{x.type}</td>
-                    <td style={td()}><StatusBadge status={x.status} /></td>
-                    <td style={td()}>{x.findings}</td>
-                    <td style={td()}>{x.actionRequired}</td>
-                    <td style={td()}>{x.remarks}</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button onClick={() => openEdit(x)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
-                        {confirmDel === x.id ? (
-                          <>
-                            <button onClick={() => { deleteInspection(x.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button>
-                            <button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button>
-                          </>
-                        ) : (
-                          <button onClick={() => setConfirmDel(x.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        ? <EmptyState icon={ClipboardList} title="No inspection records" sub='Click "Add Inspection" to start recording site verification results.' />
+        : visible.map((x) => (
+          <div key={x.id} style={{ ...card(), marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: ACCENT }}>{x.panelId || '—'}</span>
+                  {x.feederId && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>/ {x.feederId}</span>}
+                  <StatusBadge status={x.status} />
+                  <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>{x.inspectionType} · {x.inspectionDate}</span>
+                  {x.inspector && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Inspector: {x.inspector}</span>}
+                </div>
+                {/* Check grid */}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {CHECK_ITEMS.map(({ key, label: lbl }) => (
+                    <span key={key} style={{ fontSize: 10, color: 'var(--ec-text-muted)' }}>
+                      {lbl}: <CheckBadge val={x[key] as CheckResult} />
+                    </span>
+                  ))}
+                </div>
+                {x.observations && <div style={{ fontSize: 11, color: 'var(--ec-text-secondary)', marginBottom: 3 }}><b>Obs:</b> {x.observations}</div>}
+                {x.correctiveActions && <div style={{ fontSize: 11, color: '#F59E0B', marginBottom: 3 }}><b>CA:</b> {x.correctiveActions}</div>}
+                {x.responsiblePerson && <div style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Responsible: {x.responsiblePerson} {x.targetCompletionDate && `· Target: ${x.targetCompletionDate}`} {x.closureDate && `· Closed: ${x.closureDate}`}</div>}
+              </div>
+              <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+                {(x.auditTrail ?? []).length > 0 && (
+                  <button onClick={() => setShowAudit(showAudit === x.id ? null : x.id)} style={btn('#475569', { padding: '5px 10px', fontSize: 11 })}>
+                    Audit ({x.auditTrail.length})
+                  </button>
+                )}
+                <button onClick={() => openEdit(x)} style={btn(ACCENT, { padding: '5px 10px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
+                {confirmDel === x.id ? (
+                  <><button onClick={() => { deleteInspection(x.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '5px 10px' })}>✓</button><button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '5px 10px' })}>✗</button></>
+                ) : (
+                  <button onClick={() => setConfirmDel(x.id)} style={btn('#EF4444', { padding: '5px 10px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
+                )}
+              </div>
+            </div>
+            {showAudit === x.id && (
+              <div style={{ marginTop: 10, borderTop: '1px solid var(--ec-border)', paddingTop: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--ec-text-secondary)' }}>Audit Trail</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>{['Timestamp','Field','Previous Value','New Value','Changed By'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                  <tbody>{(x.auditTrail ?? []).map((a, j) => (
+                    <tr key={j} style={{ background: j % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                      <td style={td({ fontSize: 10 })}>{new Date(a.timestamp).toLocaleString()}</td>
+                      <td style={td({ fontSize: 10 })}>{a.field}</td>
+                      <td style={td({ fontSize: 10, color: '#EF4444' })}>{a.previousValue}</td>
+                      <td style={td({ fontSize: 10, color: '#22C55E' })}>{a.newValue}</td>
+                      <td style={td({ fontSize: 10 })}>{a.changedBy}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
+        ))}
     </div>
   );
 }
@@ -2581,98 +2741,348 @@ function Inspection() {
 
 function Reports() {
   const store = useLVPanelStore();
+  const [activeTab, setActiveTab] = useState<'search' | 'reports'>('search');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchScope, setSearchScope] = useState<'all' | 'panels' | 'feeders' | 'loads' | 'meters' | 'drawings' | 'inspections'>('all');
 
-  const exportPanels = () => {
-    const ws = XLSX.utils.json_to_sheet(store.panels.map(p => ({
-      'Panel ID': p.panelId, 'Panel Name': p.panelName, 'Type': p.panelType,
-      'Area': p.electricalArea, 'Location': p.location, 'Voltage (V)': p.ratedVoltage,
-      'Rating (A)': p.ratedCurrentA, 'Breaker (A)': p.incomingBreakerRating,
-      'Fault kA': p.faultDutyKA, 'Connected kW': p.connectedLoadKW, 'Demand kW': p.maxDemandKW,
-      'Cable': p.incomingCableSize, 'Install': p.installationStatus, 'Inspect': p.inspectionStatus,
-    })));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Panel Register');
-    XLSX.writeFile(wb, 'panel_register.xlsx');
+  // Global search
+  interface SearchHit { type: string; id: string; primary: string; secondary: string; tertiary: string; }
+  const hits: SearchHit[] = [];
+  const q = searchQuery.trim().toLowerCase();
+  if (q) {
+    store.panels.forEach(p => {
+      const match = [p.panelId, p.panelName, p.electricalArea, p.location, p.incomingCableSize, p.remarks].some(v => v.toLowerCase().includes(q));
+      if (match && (searchScope === 'all' || searchScope === 'panels'))
+        hits.push({ type: 'Panel', id: p.id, primary: p.panelId, secondary: `${p.panelName} · ${p.panelType}`, tertiary: `${p.electricalArea} · ${p.installationStatus}` });
+    });
+    store.feeders.forEach(f => {
+      const match = [f.feederRef, f.fromPanel, f.toPanel, f.description, f.cableSize, f.area].some(v => v.toLowerCase().includes(q));
+      if (match && (searchScope === 'all' || searchScope === 'feeders'))
+        hits.push({ type: 'Feeder', id: f.id, primary: f.feederRef, secondary: `${f.fromPanel} → ${f.toPanel}`, tertiary: `${f.cableSize} · ${f.installationStatus}` });
+    });
+    store.loads.forEach(l => {
+      const match = [l.panelId, l.circuitRef, l.description, l.area, l.cableSize, l.loadCategory].some(v => v.toLowerCase().includes(q));
+      if (match && (searchScope === 'all' || searchScope === 'loads'))
+        hits.push({ type: 'Load', id: l.id, primary: l.circuitRef, secondary: `${l.description}`, tertiary: `${l.panelId} · ${l.ratedKW} kW · ${l.cableSize}` });
+    });
+    store.meters.forEach(m => {
+      const match = [m.meterRef, m.panelId, m.meterType, m.ctRatio, m.serialNumber].some(v => v.toLowerCase().includes(q));
+      if (match && (searchScope === 'all' || searchScope === 'meters'))
+        hits.push({ type: 'Meter', id: m.id, primary: m.meterRef, secondary: `${m.panelId} · ${m.meterType}`, tertiary: `CT: ${m.ctRatio} · ${m.installationStatus}` });
+    });
+    store.drawings.forEach(d => {
+      const match = [d.drawingNo, d.title, d.discipline, d.associatedPanel, d.remarks].some(v => v.toLowerCase().includes(q));
+      if (match && (searchScope === 'all' || searchScope === 'drawings'))
+        hits.push({ type: 'Drawing', id: d.id, primary: d.drawingNo, secondary: d.title, tertiary: `${d.revision} · ${d.status}` });
+    });
+    store.inspections.forEach(i => {
+      const match = [i.panelId, i.feederId, i.inspector, i.observations, i.correctiveActions, i.inspectionType].some(v => v.toLowerCase().includes(q));
+      if (match && (searchScope === 'all' || searchScope === 'inspections'))
+        hits.push({ type: 'Inspection', id: i.id, primary: i.panelId, secondary: `${i.inspectionType} · ${i.inspector}`, tertiary: i.status });
+    });
+  }
+
+  const typeColor: Record<string, string> = {
+    Panel: ACCENT, Feeder: '#8B5CF6', Load: '#22C55E', Meter: '#F59E0B', Drawing: '#06B6D4', Inspection: '#EC4899',
   };
 
-  const exportFeeders = () => {
-    const ws = XLSX.utils.json_to_sheet(store.feeders.map(f => ({
-      'Ref': f.feederRef, 'From': f.fromPanel, 'To': f.toPanel, 'Description': f.description,
-      'kW': f.loadKW, 'PF': f.loadPF, 'Phases': f.phases, 'V': f.voltage,
-      'Ib (A)': f.designCurrentA, 'Cable mm²': f.cableSize, 'Type': f.cableType,
-      'Length (m)': f.cableLength, 'Runs': f.numRuns, 'Breaker (A)': f.breakerRating,
-      'Status': f.installationStatus,
-    })));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Feeder Schedule');
-    XLSX.writeFile(wb, 'feeder_cable_schedule.xlsx');
-  };
+  // Report export helpers
+  const info = store.projectInfo;
+  const hdr = (title: string) => XLSX.utils.aoa_to_sheet([
+    [`Project: ${info.projectName}`, `Project No: ${info.projectNo}`, `Client: ${info.client}`],
+    [`Report: ${title}`, `Date: ${new Date().toLocaleDateString()}`, `Rev: ${info.revisionNo}`],
+    [],
+  ]);
 
-  const exportLoads = () => {
-    const ws = XLSX.utils.json_to_sheet(store.loads.map(l => ({
-      'Panel': l.panelId, 'Circuit': l.circuitRef, 'Description': l.description,
-      'Area': l.area, 'kW': l.ratedKW, 'PF': l.powerFactor, 'Phases': l.phases,
-      'V': l.voltage, 'DF': l.demandFactor, 'Qty': l.quantity,
-      'Ib (A)': l.designCurrentA, 'Breaker (A)': l.breakerRating, 'Cable': l.cableSize,
-    })));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Load Schedule');
-    XLSX.writeFile(wb, 'load_schedule.xlsx');
-  };
+  const appendToWB = (wb: ReturnType<typeof XLSX.utils.book_new>, ws: ReturnType<typeof XLSX.utils.json_to_sheet>, name: string) =>
+    XLSX.utils.book_append_sheet(wb, ws, name);
 
-  const exportFull = () => {
-    const wb = XLSX.utils.book_new();
-    const info = store.projectInfo;
-    const infoWS = XLSX.utils.aoa_to_sheet([
-      ['Project Name', info.projectName], ['Project No', info.projectNo],
-      ['Client', info.client], ['Site', info.site], ['Engineer', info.engineer],
-      ['Revision', info.revisionNo], ['Date', info.date],
-      ['System Voltage', info.systemVoltage + ' V'], ['Frequency', info.frequency + ' Hz'],
-    ]);
-    XLSX.utils.book_append_sheet(wb, infoWS, 'Project Info');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.panels), 'Panels');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.feeders), 'Feeders');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.loads), 'Loads');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.meters), 'Meters');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.drawings), 'Drawings');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.inspections), 'Inspections');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(store.documents), 'Documents');
-    XLSX.writeFile(wb, `${info.projectNo || 'LV_Panel'}_Full_Report.xlsx`);
-  };
-
-  const exports = [
-    { title: 'Panel Register', sub: `${store.panels.length} panels`, color: ACCENT, action: exportPanels, icon: Server },
-    { title: 'Feeder & Cable Schedule', sub: `${store.feeders.length} feeders`, color: '#8B5CF6', action: exportFeeders, icon: Cable },
-    { title: 'Electrical Load Schedule', sub: `${store.loads.length} loads`, color: '#22C55E', action: exportLoads, icon: FileText },
-    { title: 'Full Project Report', sub: 'All data, all sheets', color: '#F59E0B', action: exportFull, icon: Download },
+  const reports = [
+    {
+      title: 'Panel Register', color: ACCENT, icon: Server,
+      sub: `${store.panels.length} panels`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Panel Register'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.panels.map(p => ({
+          'Panel ID': p.panelId, 'Panel Name': p.panelName, 'Type': p.panelType,
+          'Area': p.electricalArea, 'Location': p.location, 'Voltage (V)': p.ratedVoltage,
+          'Phases': p.phases, 'Rating (A)': p.ratedCurrentA, 'Breaker Type': p.incomingBreakerType,
+          'Breaker Rating (A)': p.incomingBreakerRating, 'Fault Duty (kA)': p.faultDutyKA,
+          'Connected Load (kW)': p.connectedLoadKW, 'Max Demand (kW)': p.maxDemandKW,
+          'Incoming Cable': p.incomingCableSize, 'Earthing': p.earthingConductorSize,
+          'Install Status': p.installationStatus, 'Inspection Status': p.inspectionStatus,
+          'Commissioning': p.commissioningStatus, 'Remarks': p.remarks,
+        }))), 'Panel Register');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Panel_Register.xlsx`);
+      },
+    },
+    {
+      title: 'Load Schedule (Panel-wise)', color: '#22C55E', icon: FileText,
+      sub: `${store.loads.length} loads`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Electrical Load Schedule'), 'Cover');
+        const panelIds = [...new Set(store.loads.map(l => l.panelId))].sort();
+        for (const pid of panelIds) {
+          const rows = store.loads.filter(l => l.panelId === pid).map(l => ({
+            'Circuit Ref': l.circuitRef, 'Description': l.description, 'Equipment': l.equipmentName,
+            'Area': l.area, 'Category': l.loadCategory, 'kW': l.ratedKW, 'PF': l.powerFactor,
+            'Phases': l.phases, 'Voltage (V)': l.voltage, 'Qty': l.quantity,
+            'Demand Factor': l.demandFactor, 'Ib (A)': l.designCurrentA,
+            'Breaker (A)': l.breakerRating, 'Cable Size': l.cableSize, 'Remarks': l.remarks,
+          }));
+          if (rows.length) appendToWB(wb, XLSX.utils.json_to_sheet(rows), pid.slice(0, 31));
+        }
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Load_Schedule.xlsx`);
+      },
+    },
+    {
+      title: 'MDB Outgoing Feeder Schedule', color: '#8B5CF6', icon: Cable,
+      sub: `${store.feeders.length} feeders`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('MDB Outgoing Feeder Schedule'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.feeders.map(f => ({
+          'S/N': f.serialNo, 'Feeder Ref': f.feederRef, 'From Panel': f.fromPanel, 'To Panel': f.toPanel,
+          'Description': f.description, 'Area': f.area, 'Load (kW)': f.loadKW, 'PF': f.loadPF,
+          'Phases': f.phases, 'Voltage (V)': f.voltage, 'Ib (A)': f.designCurrentA,
+          'Cable Size': f.cableSize, 'Cable Type': f.cableType, 'No. Cores': f.numCores,
+          'Required Length (m)': f.requiredLengthM, 'Actual Length (m)': f.actualLengthM,
+          'No. Runs': f.numRuns, 'Breaker (A)': f.breakerRating, 'Breaker Type': f.breakerType,
+          'Demand Factor': f.demandFactor, 'Install Status': f.installationStatus,
+          'Field Verification': f.fieldVerificationStatus, 'Remarks': f.remarks,
+        }))), 'Feeder Schedule');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Feeder_Schedule.xlsx`);
+      },
+    },
+    {
+      title: 'Cable Schedule & Pending Works', color: '#06B6D4', icon: Cable,
+      sub: `Pending: ${store.feeders.filter(f => f.installationStatus !== 'Completed').length}`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Cable Schedule & Pending Cable Works'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.feeders.map(f => ({
+          'Feeder Ref': f.feederRef, 'From': f.fromPanel, 'To': f.toPanel,
+          'Cable Size': f.cableSize, 'Type': f.cableType, 'Cores': f.numCores,
+          'Required (m)': f.requiredLengthM, 'Actual (m)': f.actualLengthM,
+          'Runs': f.numRuns, 'Status': f.installationStatus,
+          'Field Verify': f.fieldVerificationStatus, 'Inspection Notes': f.inspectionRemarks,
+        }))), 'Cable Schedule');
+        const pending = store.feeders.filter(f => !['Completed', 'Verified'].includes(f.installationStatus));
+        if (pending.length) appendToWB(wb, XLSX.utils.json_to_sheet(pending.map(f => ({
+          'Feeder Ref': f.feederRef, 'From': f.fromPanel, 'To': f.toPanel,
+          'Cable Size': f.cableSize, 'Required (m)': f.requiredLengthM, 'Status': f.installationStatus,
+        }))), 'Pending Works');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Cable_Schedule.xlsx`);
+      },
+    },
+    {
+      title: 'Metering & CT Schedule', color: '#F59E0B', icon: Gauge,
+      sub: `${store.meters.length} meters`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Metering & CT Schedule'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.meters.map(m => ({
+          'Meter Ref': m.meterRef, 'Panel ID': m.panelId, 'Feeder ID': m.feederId,
+          'Description': m.equipmentDescription, 'Required': m.meterRequired ? 'Yes' : 'No',
+          'Installed': m.meterInstalled ? 'Yes' : 'No', 'Type': m.meterType,
+          'CT Ratio': m.ctRatio, 'CT Accuracy': m.ctAccuracyClass, 'CT Qty': m.ctQuantity,
+          'Priority': m.meteringPriority, 'Protocol': m.communicationProtocol,
+          'EMS Status': m.emsIntegrationStatus, 'Serial No': m.serialNumber,
+          'Install Status': m.installationStatus, 'Remarks': m.remarks,
+        }))), 'Metering CT');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Metering_CT.xlsx`);
+      },
+    },
+    {
+      title: 'Inspection Status Report', color: '#EC4899', icon: ClipboardList,
+      sub: `${store.inspections.length} records`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Panel Inspection Status Report'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.inspections.map(i => ({
+          'Panel': i.panelId, 'Feeder': i.feederId, 'Date': i.inspectionDate,
+          'Inspector': i.inspector, 'Type': i.inspectionType, 'Status': i.status,
+          'Cable Size': i.cableSizeVerified, 'Breaker Rating': i.breakerRatingVerified,
+          'Termination': i.cableTerminationStatus, 'Tagging': i.cableTaggingStatus,
+          'Earthing': i.earthingVerified, 'Meter': i.meterInstallVerified, 'Drawing': i.drawingCompliance,
+          'Observations': i.observations, 'Corrective Actions': i.correctiveActions,
+          'Responsible': i.responsiblePerson, 'Target Date': i.targetCompletionDate, 'Closed': i.closureDate,
+        }))), 'Inspection Register');
+        const outstanding = store.inspections.filter(i => ['Observation Raised','Corrective Action Pending'].includes(i.status));
+        if (outstanding.length) appendToWB(wb, XLSX.utils.json_to_sheet(outstanding.map(i => ({
+          'Panel': i.panelId, 'Status': i.status, 'Observations': i.observations,
+          'Corrective Actions': i.correctiveActions, 'Responsible': i.responsiblePerson, 'Target': i.targetCompletionDate,
+        }))), 'Outstanding');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Inspection_Report.xlsx`);
+      },
+    },
+    {
+      title: 'Outstanding Observations', color: '#EF4444', icon: AlertCircle,
+      sub: `${store.inspections.filter(i => ['Observation Raised','Corrective Action Pending'].includes(i.status)).length} open`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Outstanding Electrical Observations'), 'Cover');
+        const open = store.inspections.filter(i => !['Verified','Closed'].includes(i.status));
+        appendToWB(wb, XLSX.utils.json_to_sheet(open.map(i => ({
+          'Panel': i.panelId, 'Feeder': i.feederId, 'Date': i.inspectionDate,
+          'Inspector': i.inspector, 'Status': i.status,
+          'Observations': i.observations, 'Corrective Actions': i.correctiveActions,
+          'Responsible': i.responsiblePerson, 'Target Date': i.targetCompletionDate,
+        }))), 'Open Observations');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Observations.xlsx`);
+      },
+    },
+    {
+      title: 'Load Summary', color: '#10B981', icon: BarChart3,
+      sub: `Connected: ${store.loads.reduce((s, l) => s + l.ratedKW * l.quantity, 0).toFixed(1)} kW`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Load Summary'), 'Cover');
+        const panelIds = [...new Set(store.loads.map(l => l.panelId))].sort();
+        const summaryRows = panelIds.map(pid => {
+          const pLoads = store.loads.filter(l => l.panelId === pid);
+          const connKW = pLoads.reduce((s, l) => s + l.ratedKW * l.quantity, 0);
+          const demandKW = pLoads.reduce((s, l) => s + l.ratedKW * l.quantity * l.demandFactor, 0);
+          return { 'Panel ID': pid, 'Load Count': pLoads.length, 'Connected Load (kW)': connKW.toFixed(2), 'Max Demand (kW)': demandKW.toFixed(2), 'Demand Factor': pLoads.length ? (demandKW / connKW).toFixed(3) : '' };
+        });
+        appendToWB(wb, XLSX.utils.json_to_sheet(summaryRows), 'Load Summary');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Load_Summary.xlsx`);
+      },
+    },
+    {
+      title: 'Drawing Register', color: '#6366F1', icon: BookOpen,
+      sub: `${store.drawings.length} drawings`,
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Electrical Drawing Register'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.drawings.map(d => ({
+          'Drawing No': d.drawingNo, 'Title': d.title, 'Category': d.category,
+          'Discipline': d.discipline, 'Associated Panel': d.associatedPanel,
+          'Revision': d.revision, 'Date': d.date, 'Status': d.status,
+          'Approval': d.approvalStatus, 'File Reference': d.fileRef, 'Remarks': d.remarks,
+        }))), 'Drawing Register');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV'}_Drawing_Register.xlsx`);
+      },
+    },
+    {
+      title: 'Full Project Report', color: '#F59E0B', icon: Download,
+      sub: 'All sections — single workbook',
+      action: () => {
+        const wb = XLSX.utils.book_new();
+        appendToWB(wb, hdr('Full Project Report'), 'Cover');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.panels.map(p => ({ 'Panel ID': p.panelId, 'Name': p.panelName, 'Type': p.panelType, 'Area': p.electricalArea, 'Connected (kW)': p.connectedLoadKW, 'Demand (kW)': p.maxDemandKW, 'Status': p.installationStatus }))), 'Panels');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.feeders.map(f => ({ 'Ref': f.feederRef, 'From': f.fromPanel, 'To': f.toPanel, 'kW': f.loadKW, 'Cable': f.cableSize, 'Length (m)': f.requiredLengthM, 'Breaker (A)': f.breakerRating, 'Status': f.installationStatus }))), 'Feeders');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.loads.map(l => ({ 'Panel': l.panelId, 'Circuit': l.circuitRef, 'Desc': l.description, 'kW': l.ratedKW, 'Breaker': l.breakerRating, 'Cable': l.cableSize }))), 'Loads');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.meters.map(m => ({ 'Ref': m.meterRef, 'Panel': m.panelId, 'Type': m.meterType, 'CT': m.ctRatio, 'Status': m.installationStatus }))), 'Meters');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.drawings.map(d => ({ 'No': d.drawingNo, 'Title': d.title, 'Rev': d.revision, 'Status': d.status }))), 'Drawings');
+        appendToWB(wb, XLSX.utils.json_to_sheet(store.inspections.map(i => ({ 'Panel': i.panelId, 'Date': i.inspectionDate, 'Type': i.inspectionType, 'Status': i.status, 'Obs': i.observations }))), 'Inspections');
+        XLSX.writeFile(wb, `${info.projectNo || 'LV_Panel'}_Full_Report.xlsx`);
+      },
+    },
   ];
 
   return (
     <div>
-      <SectionHeader title="Reports & Excel Export" subtitle="Generate Excel reports for submission" icon={Download} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16 }}>
-        {exports.map(e => (
-          <div key={e.title} style={card({ display: 'flex', alignItems: 'center', gap: 20 })}>
-            <div style={{ background: e.color + '22', borderRadius: 12, padding: 14 }}>
-              <e.icon style={{ width: 28, height: 28, color: e.color }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ec-text-primary)', marginBottom: 4 }}>{e.title}</div>
-              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 12 }}>{e.sub}</div>
-              <button style={btn(e.color)} onClick={e.action}>
-                <Download style={{ width: 13, height: 13 }} /> Download Excel
-              </button>
-            </div>
-          </div>
+      <SectionHeader title="Search, Filtering & Reports" subtitle="Global search and Excel export for all LV Panel data" icon={Download} />
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 18 }}>
+        {(['search', 'reports'] as const).map(t => (
+          <button key={t} onClick={() => setActiveTab(t)} style={{
+            padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, textTransform: 'capitalize',
+            background: activeTab === t ? ACCENT : 'var(--ec-bg-surface)',
+            color: activeTab === t ? '#fff' : 'var(--ec-text-secondary)',
+          }}>{t === 'search' ? 'Global Search' : 'Export Reports'}</button>
         ))}
       </div>
+
+      {activeTab === 'search' && (
+        <div>
+          <div style={{ ...card(), marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Search style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', width: 14, height: 14, color: 'var(--ec-text-muted)', pointerEvents: 'none' }} />
+                <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search panels, feeders, loads, drawings, inspections..."
+                  style={{ ...input(), paddingLeft: 34, width: '100%', fontSize: 13 }} />
+              </div>
+              <select value={searchScope} onChange={e => setSearchScope(e.target.value as typeof searchScope)} style={input({ width: 130 })}>
+                <option value="all">All Types</option>
+                <option value="panels">Panels</option>
+                <option value="feeders">Feeders</option>
+                <option value="loads">Loads</option>
+                <option value="meters">Meters</option>
+                <option value="drawings">Drawings</option>
+                <option value="inspections">Inspections</option>
+              </select>
+              {searchQuery && <button style={btn('#475569')} onClick={() => setSearchQuery('')}>Clear</button>}
+            </div>
+          </div>
+          {!searchQuery && (
+            <EmptyState icon={Search} title="Global Search" sub="Search across all panels, feeders, loads, meters, drawings and inspections." />
+          )}
+          {searchQuery && hits.length === 0 && (
+            <EmptyState icon={Search} title="No results" sub={`No matches found for "${searchQuery}".`} />
+          )}
+          {hits.length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 10 }}>{hits.length} result{hits.length > 1 ? 's' : ''} for "{searchQuery}"</div>
+              {hits.map((h, i) => (
+                <div key={h.id + i} style={{ ...card(), marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{ background: (typeColor[h.type] ?? ACCENT) + '22', borderRadius: 8, padding: '6px 12px', fontSize: 10, fontWeight: 700, color: typeColor[h.type] ?? ACCENT, whiteSpace: 'nowrap' }}>{h.type}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ec-text-primary)' }}>{h.primary}</div>
+                    <div style={{ fontSize: 11, color: 'var(--ec-text-secondary)' }}>{h.secondary}</div>
+                    <div style={{ fontSize: 10, color: 'var(--ec-text-muted)' }}>{h.tertiary}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'reports' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 14 }}>
+          {reports.map(r => (
+            <div key={r.title} style={card({ display: 'flex', alignItems: 'center', gap: 16 })}>
+              <div style={{ background: r.color + '22', borderRadius: 10, padding: 12, flexShrink: 0 }}>
+                <r.icon style={{ width: 24, height: 24, color: r.color }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ec-text-primary)', marginBottom: 2 }}>{r.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginBottom: 10 }}>{r.sub}</div>
+                <button style={btn(r.color, { fontSize: 11, padding: '5px 12px' })} onClick={r.action}>
+                  <Download style={{ width: 11, height: 11 }} /> Export Excel
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── SECTION: Import Excel ────────────────────────────────────────────────────
 
+type SheetType = 'Panel Register' | 'Load Schedule' | 'Feeder/Cable' | 'Metering' | 'Drawing Register' | 'Load Summary' | 'Truth Table' | 'Unknown';
+
+interface ClassifiedSheet {
+  name: string; type: SheetType; confidence: 'High' | 'Medium' | 'Low';
+  rowCount: number; headers: string[];
+  previewRows: Record<string, string>[];
+  flags: string[];
+}
+
 interface ParseResult {
+  sheets: ClassifiedSheet[];
   panels: Omit<LVPanel, 'id' | 'createdAt' | 'updatedAt'>[];
   loads: Omit<LVLoad, 'id'>[];
   feeders: Omit<LVFeeder, 'id' | 'createdAt'>[];
+  errorLog: string[];
 }
 
 function colMatch(headers: string[], ...keywords: string[]): number {
@@ -2684,139 +3094,197 @@ function cell(row: Record<string, string>, idx: number, headers: string[]): stri
   return String(row[headers[idx]] ?? '').trim();
 }
 
+function classifySheet(name: string, headers: string[], rowCount: number): { type: SheetType; confidence: ClassifiedSheet['confidence'] } {
+  const hn = headers.map(h => h.toLowerCase());
+  const nm = name.toLowerCase();
+  const panelPattern = /^(mdb|smdb|mcc|db|edb|esmdb|sdb|mldb|msdb)\s*[-_]?\s*\d+/i;
+
+  // Truth Table
+  if (nm.includes('truth') || nm.includes('interlock') || hn.some(h => h.includes('blackout') || h.includes('normal state')))
+    return { type: 'Truth Table', confidence: 'High' };
+  // Drawing Register
+  if (nm.includes('draw') || nm.includes('drg') || hn.some(h => h.includes('drawing no') || h.includes('drg no')))
+    return { type: 'Drawing Register', confidence: nm.includes('draw') ? 'High' : 'Medium' };
+  // Load Summary
+  if (nm.includes('summary') || nm.includes('demand') || (hn.some(h => h.includes('total')) && hn.some(h => h.includes('kva'))))
+    return { type: 'Load Summary', confidence: nm.includes('summary') ? 'High' : 'Medium' };
+  // Metering
+  if (nm.includes('meter') || nm.includes('ct') || hn.some(h => h.includes('ct ratio') || h.includes('metering')))
+    return { type: 'Metering', confidence: nm.includes('meter') ? 'High' : 'Medium' };
+  // Panel Register
+  if (nm.includes('panel reg') || nm.includes('board sched') || (hn.some(h => h.includes('panel id') || h.includes('board ref')) && !hn.some(h => h.includes('circuit'))))
+    return { type: 'Panel Register', confidence: hn.some(h => h.includes('panel id')) ? 'High' : 'Medium' };
+  // Feeder/Cable
+  if (nm.includes('cable') || nm.includes('feeder') || hn.some(h => h === 'from' || h.includes('from panel')))
+    return { type: 'Feeder/Cable', confidence: hn.some(h => h === 'from' || h.includes('from panel')) ? 'High' : 'Medium' };
+  // Load Schedule — sheet named like a panel or has circuit column
+  if (panelPattern.test(name) || hn.some(h => h.includes('circuit') || h.includes('load name') || h.includes('load desc')))
+    return { type: 'Load Schedule', confidence: panelPattern.test(name) ? 'High' : 'Medium' };
+  // kW column but no clear context
+  if (hn.some(h => h.includes('kw') || h.includes('power')) && rowCount > 2)
+    return { type: 'Load Schedule', confidence: 'Low' };
+
+  return { type: 'Unknown', confidence: 'Low' };
+}
+
 function parseExcel(data: ArrayBuffer): ParseResult {
   const wb = XLSX.read(data, { type: 'array' });
-  const result: ParseResult = { panels: [], loads: [], feeders: [] };
+  const result: ParseResult = { sheets: [], panels: [], loads: [], feeders: [], errorLog: [] };
 
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '', raw: false });
-    if (rows.length === 0) continue;
+    const headers = rows.length > 0 ? Object.keys(rows[0] ?? {}) : [];
+    const { type, confidence } = classifySheet(sheetName, headers, rows.length);
+    const flags: string[] = [];
 
-    const headers = Object.keys(rows[0] ?? {});
-    const hn = headers.map(h => h.toLowerCase());
+    const classified: ClassifiedSheet = {
+      name: sheetName, type, confidence, rowCount: rows.length, headers,
+      previewRows: rows.slice(0, 5),
+      flags,
+    };
+    result.sheets.push(classified);
 
-    // Detect sheet type
-    const hasCircuit = hn.some(h => h.includes('circuit') || h.includes('ref'));
-    const hasFrom = hn.some(h => h === 'from' || h.includes('source') || h.includes('from panel'));
-    const hasPanel = hn.some(h => h.includes('panel id') || h.includes('panel ref') || h.includes('board ref'));
-    const hasKW = hn.some(h => h.includes('kw') || h.includes('power'));
-    const sheetUpper = sheetName.toUpperCase();
-    const panelPattern = /^(MDB|SMDB|MCC|DB|EDB|ESMDB|SDB|MLDB|MSDB)\s*[-_]?\s*\d+/;
-    const sheetIsPanel = panelPattern.test(sheetUpper);
+    if (rows.length === 0) { flags.push('Sheet is empty'); continue; }
+    if (type === 'Unknown') { flags.push('Could not classify sheet — skipped'); continue; }
+    if (type === 'Truth Table' || type === 'Load Summary' || type === 'Metering' || type === 'Drawing Register')
+      continue; // valid sheet types — noted in classification, no structured import yet
 
-    if (hasPanel && !hasCircuit) {
-      // Panel register sheet
+    if (type === 'Panel Register') {
       const iId = colMatch(headers, 'Panel ID', 'Panel Ref', 'Board Ref', 'Reference');
       const iName = colMatch(headers, 'Panel Name', 'Description', 'Name');
       const iType = colMatch(headers, 'Type', 'Panel Type', 'Board Type');
-      const iLoc = colMatch(headers, 'Location', 'Area');
+      const iArea = colMatch(headers, 'Area', 'Location');
       const iRating = colMatch(headers, 'Rating', 'Rated Current', 'Incomer');
       const iKW = colMatch(headers, 'Connected', 'Total kW', 'kW');
+      if (iId < 0) { flags.push('Panel ID column not found'); }
 
+      let added = 0;
       for (const row of rows) {
         const panelId = cell(row, iId, headers);
         if (!panelId || panelId.toLowerCase() === 'panel id') continue;
+        const rawType = cell(row, iType, headers);
+        const validTypes: LVPanel['panelType'][] = ['MDB','SMDB','MCC','DB','EDB','ESMDB','SDB','MLDB','Other'];
+        const panelType: LVPanel['panelType'] = validTypes.includes(rawType as LVPanel['panelType']) ? rawType as LVPanel['panelType'] : 'MDB';
         result.panels.push({
-          panelId, panelName: cell(row, iName, headers),
-          panelType: (cell(row, iType, headers) as LVPanel['panelType']) || 'MDB',
-          electricalArea: cell(row, iLoc, headers), location: '',
+          panelId, panelName: cell(row, iName, headers), panelType,
+          electricalArea: cell(row, iArea, headers), location: '',
           parentPanel: '', incomingFeederRef: '', ratedVoltage: 400, phases: 3,
           ratedCurrentA: Number(cell(row, iRating, headers)) || 0,
-          incomingBreakerType: 'ACB', incomingBreakerRating: 0,
-          faultDutyKA: 50,
-          connectedLoadKW: Number(cell(row, iKW, headers)) || 0,
-          maxDemandKW: 0, incomingCableSize: '', earthingConductorSize: '',
+          incomingBreakerType: '', incomingBreakerRating: 0, faultDutyKA: 0,
+          connectedLoadKW: Number(cell(row, iKW, headers)) || 0, maxDemandKW: 0,
+          incomingCableSize: '', earthingConductorSize: '',
           energyMeter: false, installationStatus: 'Not Started',
           inspectionStatus: 'Pending', commissioningStatus: 'Not Started', remarks: '',
         });
+        added++;
       }
-    } else if (hasFrom && hasKW) {
-      // Feeder / cable schedule
+      classified.flags.push(`${added} panel record(s) parsed`);
+
+    } else if (type === 'Feeder/Cable') {
       const iRef = colMatch(headers, 'Cable Ref', 'Feeder Ref', 'Cable No', 'Ref');
       const iFrom = colMatch(headers, 'From', 'Source', 'From Panel');
       const iTo = colMatch(headers, 'To', 'Destination', 'To Panel');
-      const iKW2 = colMatch(headers, 'kW', 'Load kW', 'kilo');
+      const iKW = colMatch(headers, 'kW', 'Load kW', 'kilo');
       const iSize = colMatch(headers, 'Size', 'Cable Size', 'mm²', 'mm2');
       const iLen = colMatch(headers, 'Length', 'Run', 'Route');
       const iBreaker = colMatch(headers, 'Breaker', 'OCPD', 'Rating');
       const iDesc = colMatch(headers, 'Description', 'Load Description');
+      const iArea = colMatch(headers, 'Area', 'Zone', 'Location');
+      const iSN = colMatch(headers, 'S/N', 'Serial', 'No.');
 
+      let added = 0;
       for (const row of rows) {
-        const feederRef = cell(row, iRef, headers) || `F${result.feeders.length + 1}`.padStart(3, '0');
         const fromPanel = cell(row, iFrom, headers);
         const toPanel = cell(row, iTo, headers);
         if (!fromPanel && !toPanel) continue;
+        const feederRef = cell(row, iRef, headers) || `F${String(result.feeders.length + 1).padStart(3, '0')}`;
+        const rawLen = Number(cell(row, iLen, headers)) || 0;
         result.feeders.push({
-          feederRef, fromPanel, toPanel,
-          description: cell(row, iDesc, headers), area: '',
-          loadKW: Number(cell(row, iKW2, headers)) || 0,
+          feederRef, fromPanel, toPanel, serialNo: cell(row, iSN, headers),
+          description: cell(row, iDesc, headers), area: cell(row, iArea, headers),
+          loadKW: Number(cell(row, iKW, headers)) || 0,
           loadPF: 0.85, phases: 3, voltage: 400, designCurrentA: 0,
-          cableSize: cell(row, iSize, headers),
-          cableType: 'XLPE/SWA/PVC',
-          cableLength: Number(cell(row, iLen, headers)) || 0,
+          cableSize: cell(row, iSize, headers), cableType: '', numCores: 4,
+          requiredLengthM: rawLen, actualLengthM: 0,
           numRuns: 1, breakerRating: Number(cell(row, iBreaker, headers)) || 0,
-          breakerType: 'MCCB', demandFactor: 1,
-          installationStatus: 'Pending', remarks: '',
+          breakerType: 'MCCB', demandFactor: 1, earthingCableSize: '',
+          installationStatus: 'Not Started', fieldVerificationStatus: 'Pending',
+          inspectionRemarks: '', remarks: '',
         });
+        added++;
       }
-    } else if (hasCircuit || sheetIsPanel || hasKW) {
-      // Load schedule sheet
-      const derivedPanel = sheetIsPanel ? sheetName : '';
-      const iRef = colMatch(headers, 'Circuit', 'Ref', 'Item', 'No.', 'Circuit Ref');
+      classified.flags.push(`${added} feeder record(s) parsed`);
+
+    } else if (type === 'Load Schedule') {
+      const derivedPanel = /^(MDB|SMDB|MCC|DB|EDB|ESMDB|SDB|MLDB|MSDB)\s*[-_]?\s*\d+/i.test(sheetName) ? sheetName : '';
+      const iRef = colMatch(headers, 'Circuit', 'Ref', 'Circuit Ref');
       const iDesc = colMatch(headers, 'Description', 'Load Description', 'Equipment', 'Load Name');
-      const iKW2 = colMatch(headers, 'kW', 'Rated kW', 'Power (kW)', 'kilo');
+      const iEquip = colMatch(headers, 'Equipment', 'Tag', 'Equipment Name');
+      const iKW = colMatch(headers, 'kW', 'Rated kW', 'Power (kW)', 'kilo');
       const iPF = colMatch(headers, 'PF', 'Power Factor', 'cos');
       const iPh = colMatch(headers, 'Phase', 'Ph');
       const iV = colMatch(headers, 'Voltage', 'Volt', 'V (');
       const iDF = colMatch(headers, 'Demand Factor', 'DF');
-      const iQty = colMatch(headers, 'Qty', 'Quantity', 'No.');
+      const iQty = colMatch(headers, 'Qty', 'Quantity');
       const iBreaker = colMatch(headers, 'Breaker', 'OCPD', 'CB Rating', 'Rating (A)');
+      const iBreakerType = colMatch(headers, 'Breaker Type', 'CB Type', 'OCPD Type');
       const iCable = colMatch(headers, 'Cable Size', 'Cable (mm', 'Conductor', 'mm²');
       const iArea = colMatch(headers, 'Area', 'Location', 'Zone');
       const iPanelId = colMatch(headers, 'Panel', 'Board', 'Panel ID');
 
-      let rowIdx = 0;
+      let added = 0, flagged = 0;
       for (const row of rows) {
         const desc = cell(row, iDesc, headers);
-        if (!desc || desc.toLowerCase() === 'description' || desc.toLowerCase() === 'load description') continue;
-        const kwStr = cell(row, iKW2, headers);
+        const skip = ['description', 'load description', 'total', 'sub-total', 'grand total'];
+        if (!desc || skip.some(s => desc.toLowerCase() === s)) continue;
+        const kwStr = cell(row, iKW, headers);
         const kw = Number(kwStr.replace(/[^0-9.]/g, ''));
-        if (isNaN(kw) && !desc) continue;
-        rowIdx++;
         const panelId = cell(row, iPanelId, headers) || derivedPanel;
         const rawPh = cell(row, iPh, headers);
-        const phases: 1 | 3 = rawPh === '1' || rawPh.toLowerCase() === 'single' ? 1 : 3;
-        const rawV = cell(row, iV, headers);
-        const voltage = Number(rawV) || (phases === 1 ? 230 : 400);
-        const df = Number(cell(row, iDF, headers)) || 1;
+        const phases: 1 | 3 = rawPh === '1' || rawPh.toLowerCase().includes('single') ? 1 : 3;
+        const voltage = Number(cell(row, iV, headers)) || (phases === 1 ? 230 : 400);
+        const rawDF = Number(cell(row, iDF, headers)) || 1;
+        const demandFactor = rawDF > 1 ? rawDF / 100 : rawDF;
         const qty = Number(cell(row, iQty, headers)) || 1;
         const pf = Number(cell(row, iPF, headers)) || 0.85;
-        const ib = kw * 1000 / (pf * (phases === 3 ? 1.732 * voltage : voltage)) || 0;
-
+        const hasSufficientForCurrent = kw > 0 && pf > 0 && voltage > 0;
+        const ib = hasSufficientForCurrent ? kw * 1000 / (pf * (phases === 3 ? 1.732 * voltage : voltage)) : 0;
+        if (!hasSufficientForCurrent && kw === 0) { flagged++; flags.push(`Row skipped — missing kW: "${desc}"`); continue; }
         result.loads.push({
-          panelId, circuitRef: cell(row, iRef, headers) || `C${rowIdx}`,
-          description: desc, area: cell(row, iArea, headers),
-          loadType: 'General', ratedKW: kw, powerFactor: pf, phases, voltage,
-          demandFactor: df > 1 ? df / 100 : df, quantity: qty,
-          designCurrentA: Math.round(ib * 10) / 10, startingCurrentA: 0,
-          breakerRating: Number(cell(row, iBreaker, headers)) || 0,
-          cableSize: cell(row, iCable, headers), remarks: '',
+          panelId, circuitRef: cell(row, iRef, headers) || `C${String(result.loads.length + 1).padStart(3, '0')}`,
+          description: desc, equipmentName: cell(row, iEquip, headers), area: cell(row, iArea, headers),
+          loadCategory: 'General', loadFactor: 1,
+          ratedKW: kw, powerFactor: pf, phases, voltage, quantity: qty,
+          demandFactor, designCurrentA: Math.round(ib * 100) / 100,
+          startingCurrentA: 0, breakerType: cell(row, iBreakerType, headers) || 'MCB',
+          breakerRating: Number(cell(row, iBreaker, headers)) || 0, faultDutyKA: 0,
+          cableType: '', cableSize: cell(row, iCable, headers), earthingConductorSize: '', remarks: '',
         });
+        added++;
       }
+      classified.flags.push(`${added} load record(s) parsed${flagged ? `, ${flagged} flagged` : ''}`);
     }
   }
   return result;
 }
 
 function ImportExcel() {
-  const { importPanels, importFeeders, importLoads } = useLVPanelStore();
+  const { importPanels, importFeeders, importLoads, importBatches, addImportBatch } = useLVPanelStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsed, setParsed] = useState<ParseResult | null>(null);
   const [fileName, setFileName] = useState('');
-  const [activeTab, setActiveTab] = useState('panels');
+  const [activeTab, setActiveTab] = useState<'classify' | 'panels' | 'loads' | 'feeders' | 'errors' | 'history'>('classify');
   const [mergeMode, setMergeMode] = useState(true);
   const [imported, setImported] = useState<{ panels: number; loads: number; feeders: number } | null>(null);
+  const [expandSheet, setExpandSheet] = useState<string | null>(null);
+
+  const confColor = { High: '#22C55E', Medium: '#F59E0B', Low: '#EF4444' };
+  const typeColor: Record<SheetType, string> = {
+    'Panel Register': ACCENT, 'Load Schedule': '#22C55E', 'Feeder/Cable': '#8B5CF6',
+    'Metering': '#F59E0B', 'Drawing Register': '#06B6D4', 'Load Summary': '#10B981',
+    'Truth Table': '#64748B', 'Unknown': '#EF4444',
+  };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2824,7 +3292,7 @@ function ImportExcel() {
     setFileName(file.name);
     const buf = await file.arrayBuffer();
     const result = parseExcel(buf);
-    setParsed(result); setImported(null);
+    setParsed(result); setImported(null); setActiveTab('classify');
   };
 
   const doImport = () => {
@@ -2832,144 +3300,253 @@ function ImportExcel() {
     importPanels(parsed.panels, mergeMode);
     importFeeders(parsed.feeders, mergeMode);
     importLoads(parsed.loads, mergeMode);
+    const total = parsed.panels.length + parsed.loads.length + parsed.feeders.length;
+    const flagged = parsed.errorLog.length;
+    addImportBatch({
+      filename: fileName, importedAt: new Date().toISOString(),
+      sheetCount: parsed.sheets.length, recordsCreated: total,
+      recordsSkipped: 0, recordsFlagged: flagged,
+      status: flagged > 0 ? 'Partial' : 'Completed', errorLog: parsed.errorLog,
+    });
     setImported({ panels: parsed.panels.length, loads: parsed.loads.length, feeders: parsed.feeders.length });
   };
 
+  const downloadErrors = () => {
+    if (!parsed) return;
+    const text = parsed.errorLog.join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'import_errors.txt'; a.click();
+  };
+
   const tabs = [
+    { id: 'classify', label: `Classification (${parsed?.sheets.length ?? 0} sheets)` },
     { id: 'panels', label: `Panels (${parsed?.panels.length ?? 0})` },
     { id: 'loads', label: `Loads (${parsed?.loads.length ?? 0})` },
     { id: 'feeders', label: `Feeders (${parsed?.feeders.length ?? 0})` },
-  ];
+    { id: 'errors', label: `Issues (${parsed?.errorLog.length ?? 0})` },
+    { id: 'history', label: `History (${importBatches.length})` },
+  ] as const;
 
   return (
     <div>
-      <SectionHeader title="Import Excel Data" subtitle="Import load schedules, panels and cable data from Excel" icon={Upload} />
+      <SectionHeader title="Import Excel Data" subtitle="Smart multi-worksheet classifier — processes actual workbook data without inventing values" icon={Upload} />
 
-      {/* Info */}
       <div style={{ ...card({ background: ACCENT + '11', border: `1px solid ${ACCENT}44` }), marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: ACCENT, marginBottom: 8 }}>Smart Excel Parser</div>
-        <div style={{ fontSize: 12, color: 'var(--ec-text-secondary)', lineHeight: 1.6 }}>
-          Supports load schedule workbooks (e.g. MEP RAK-516). The parser automatically detects sheet types:
-          <br />• Sheets named like <strong>MDB-01, SMDB-02</strong> are parsed as load schedules for that panel
-          <br />• Sheets with "From / To" columns are parsed as feeder/cable schedules
-          <br />• Sheets with "Panel ID" columns are parsed as panel registers
+        <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT, marginBottom: 6 }}>Classification Rules</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(['Panel Register','Load Schedule','Feeder/Cable','Metering','Drawing Register','Load Summary','Truth Table','Unknown'] as SheetType[]).map(t => (
+            <span key={t} style={{ background: typeColor[t] + '22', color: typeColor[t], border: `1px solid ${typeColor[t]}44`, borderRadius: 4, padding: '2px 8px', fontSize: 10, fontWeight: 600 }}>{t}</span>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginTop: 6 }}>
+          Original cable sizes, breaker ratings, and design values are preserved exactly as in the source workbook. Missing fields are left blank — not invented.
         </div>
       </div>
 
-      {/* Upload */}
       <div style={{ ...card(), marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 1 — Select Excel File</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 1 — Select Workbook</div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button style={btn(ACCENT)} onClick={() => fileRef.current?.click()}>
-            <Upload style={{ width: 14, height: 14 }} /> Browse File
+            <Upload style={{ width: 14, height: 14 }} /> Browse .xlsx / .xls
           </button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: 'none' }} />
           {fileName && <span style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>📄 {fileName}</span>}
         </div>
       </div>
 
-      {/* Preview */}
       {parsed && (
         <>
-          <div style={{ ...card(), marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>Step 2 — Preview Parsed Data</div>
-              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginLeft: 'auto' }}>
-                Found {parsed.panels.length} panels · {parsed.loads.length} loads · {parsed.feeders.length} feeders
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-              {tabs.map(t => (
-                <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
-                  padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 12,
-                  background: activeTab === t.id ? ACCENT : 'var(--ec-bg-surface)',
-                  color: activeTab === t.id ? '#fff' : 'var(--ec-text-secondary)',
-                }}>{t.label}</button>
-              ))}
-            </div>
-            <div style={{ maxHeight: 280, overflowY: 'auto', overflowX: 'auto' }}>
-              {activeTab === 'panels' && (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr>{['Panel ID','Name','Type','Area','Rating (A)','kW'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {parsed.panels.map((p, i) => (
-                      <tr key={i} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                        <td style={td({ color: ACCENT, fontWeight: 700 })}>{p.panelId}</td>
-                        <td style={td()}>{p.panelName}</td>
-                        <td style={td()}>{p.panelType}</td>
-                        <td style={td()}>{p.electricalArea}</td>
-                        <td style={td()}>{p.ratedCurrentA}</td>
-                        <td style={td()}>{p.connectedLoadKW}</td>
-                      </tr>
-                    ))}
-                    {parsed.panels.length === 0 && <tr><td colSpan={6} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No panels detected</td></tr>}
-                  </tbody>
-                </table>
-              )}
-              {activeTab === 'loads' && (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr>{['Panel','Circuit','Description','kW','PF','Ph','V','DF','Breaker','Cable'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {parsed.loads.map((l, i) => (
-                      <tr key={i} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                        <td style={td({ color: ACCENT })}>{l.panelId}</td>
-                        <td style={td()}>{l.circuitRef}</td>
-                        <td style={td()}>{l.description}</td>
-                        <td style={td()}>{l.ratedKW}</td>
-                        <td style={td()}>{l.powerFactor}</td>
-                        <td style={td()}>{l.phases}φ</td>
-                        <td style={td()}>{l.voltage}</td>
-                        <td style={td()}>{l.demandFactor}</td>
-                        <td style={td()}>{l.breakerRating}</td>
-                        <td style={td()}>{l.cableSize}</td>
-                      </tr>
-                    ))}
-                    {parsed.loads.length === 0 && <tr><td colSpan={10} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No loads detected</td></tr>}
-                  </tbody>
-                </table>
-              )}
-              {activeTab === 'feeders' && (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr>{['Ref','From','To','kW','Cable','Length'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {parsed.feeders.map((f, i) => (
-                      <tr key={i} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                        <td style={td({ color: ACCENT })}>{f.feederRef}</td>
-                        <td style={td()}>{f.fromPanel}</td>
-                        <td style={td()}>{f.toPanel}</td>
-                        <td style={td()}>{f.loadKW}</td>
-                        <td style={td()}>{f.cableSize}</td>
-                        <td style={td()}>{f.cableLength}</td>
-                      </tr>
-                    ))}
-                    {parsed.feeders.length === 0 && <tr><td colSpan={6} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No feeders detected</td></tr>}
-                  </tbody>
-                </table>
-              )}
-            </div>
+          {/* Tab bar */}
+          <div style={{ display: 'flex', gap: 3, marginBottom: 14, flexWrap: 'wrap' }}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id as typeof activeTab)} style={{
+                padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                background: activeTab === t.id ? ACCENT : 'var(--ec-bg-surface)',
+                color: activeTab === t.id ? '#fff' : 'var(--ec-text-secondary)',
+              }}>{t.label}</button>
+            ))}
           </div>
 
-          <div style={{ ...card(), marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 3 — Import Options</div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 12 }}>
-              <input type="checkbox" checked={mergeMode} onChange={e => setMergeMode(e.target.checked)} />
-              <span style={{ fontSize: 12, color: 'var(--ec-text-secondary)' }}>
-                Merge mode — skip existing panels/feeders (by ID), only add new records
-              </span>
-            </label>
-            {!mergeMode && (
-              <div style={{ background: '#EF444422', border: '1px solid #EF444455', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#EF4444' }}>
-                ⚠️ Replace mode will overwrite all existing panels and feeders.
-              </div>
-            )}
-            <button style={btn('#22C55E')} onClick={doImport}>
-              <CheckCircle style={{ width: 14, height: 14 }} /> Import {parsed.panels.length + parsed.loads.length + parsed.feeders.length} Records
-            </button>
-          </div>
+          {/* Classification tab */}
+          {activeTab === 'classify' && (
+            <div style={{ ...card(), marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 2 — Review Sheet Classification</div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 12 }}>
+                <thead><tr>{['Sheet Name','Classified As','Confidence','Rows','Notes / Flags'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {parsed.sheets.map((s, i) => (
+                    <React.Fragment key={s.name}>
+                      <tr style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent', cursor: 'pointer' }}
+                        onClick={() => setExpandSheet(expandSheet === s.name ? null : s.name)}>
+                        <td style={td({ fontWeight: 600 })}>{s.name}</td>
+                        <td style={td()}><span style={{ background: typeColor[s.type] + '22', color: typeColor[s.type], borderRadius: 4, padding: '1px 6px', fontSize: 10, fontWeight: 700 }}>{s.type}</span></td>
+                        <td style={td()}><span style={{ color: confColor[s.confidence], fontWeight: 700, fontSize: 11 }}>{s.confidence}</span></td>
+                        <td style={td()}>{s.rowCount}</td>
+                        <td style={td({ fontSize: 10, color: 'var(--ec-text-muted)' })}>{s.flags.join(' · ')}</td>
+                      </tr>
+                      {expandSheet === s.name && s.previewRows.length > 0 && (
+                        <tr><td colSpan={5} style={{ padding: '8px 12px', background: 'var(--ec-bg-card)' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 4, color: 'var(--ec-text-secondary)' }}>Preview (first {s.previewRows.length} rows)</div>
+                          <div style={{ overflowX: 'auto', maxHeight: 140 }}>
+                            <table style={{ borderCollapse: 'collapse', fontSize: 10 }}>
+                              <thead><tr>{s.headers.map(h => <th key={h} style={{ ...TH, fontSize: 9, padding: '2px 8px' }}>{h}</th>)}</tr></thead>
+                              <tbody>{s.previewRows.map((r, j) => (
+                                <tr key={j}>{s.headers.map(h => <td key={h} style={{ ...td(), fontSize: 9, padding: '2px 8px' }}>{r[h]}</td>)}</tr>
+                              ))}</tbody>
+                            </table>
+                          </div>
+                        </td></tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-          {imported && (
-            <div style={{ background: '#22C55E22', border: '1px solid #22C55E55', borderRadius: 10, padding: 16, fontSize: 13, color: '#22C55E' }}>
-              ✅ Import successful — {imported.panels} panels, {imported.loads} loads, {imported.feeders} feeders added.
+          {/* Panels preview */}
+          {activeTab === 'panels' && (
+            <div style={{ ...card(), marginBottom: 14, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>{['Panel ID','Name','Type','Area','Rating (A)','Connected (kW)'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {parsed.panels.map((p, i) => (
+                    <tr key={i} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                      <td style={td({ color: ACCENT, fontWeight: 700 })}>{p.panelId}</td>
+                      <td style={td()}>{p.panelName}</td>
+                      <td style={td()}>{p.panelType}</td>
+                      <td style={td()}>{p.electricalArea}</td>
+                      <td style={td()}>{p.ratedCurrentA || '—'}</td>
+                      <td style={td()}>{p.connectedLoadKW || '—'}</td>
+                    </tr>
+                  ))}
+                  {parsed.panels.length === 0 && <tr><td colSpan={6} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No panels classified in this workbook</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Loads preview */}
+          {activeTab === 'loads' && (
+            <div style={{ ...card(), marginBottom: 14, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>{['Panel','Circuit','Description','kW','PF','Ph','V','DF','Breaker (A)','Cable'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {parsed.loads.map((l, i) => (
+                    <tr key={i} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                      <td style={td({ color: ACCENT })}>{l.panelId || '—'}</td>
+                      <td style={td()}>{l.circuitRef}</td>
+                      <td style={td()}>{l.description}</td>
+                      <td style={td()}>{l.ratedKW}</td>
+                      <td style={td()}>{l.powerFactor}</td>
+                      <td style={td()}>{l.phases}φ</td>
+                      <td style={td()}>{l.voltage}</td>
+                      <td style={td()}>{l.demandFactor}</td>
+                      <td style={td()}>{l.breakerRating || '—'}</td>
+                      <td style={td()}>{l.cableSize || '—'}</td>
+                    </tr>
+                  ))}
+                  {parsed.loads.length === 0 && <tr><td colSpan={10} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No loads found</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Feeders preview */}
+          {activeTab === 'feeders' && (
+            <div style={{ ...card(), marginBottom: 14, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>{['Ref','From','To','kW','Cable','Req. Length (m)','Breaker (A)'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {parsed.feeders.map((f, i) => (
+                    <tr key={i} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                      <td style={td({ color: ACCENT })}>{f.feederRef}</td>
+                      <td style={td()}>{f.fromPanel}</td>
+                      <td style={td()}>{f.toPanel}</td>
+                      <td style={td()}>{f.loadKW || '—'}</td>
+                      <td style={td()}>{f.cableSize || '—'}</td>
+                      <td style={td()}>{f.requiredLengthM || '—'}</td>
+                      <td style={td()}>{f.breakerRating || '—'}</td>
+                    </tr>
+                  ))}
+                  {parsed.feeders.length === 0 && <tr><td colSpan={7} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No feeders found</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Errors */}
+          {activeTab === 'errors' && (
+            <div style={{ ...card(), marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Import Issues & Flags</div>
+                {parsed.errorLog.length > 0 && <button style={btn('#475569')} onClick={downloadErrors}><Download style={{ width: 12, height: 12 }} /> Download Report</button>}
+              </div>
+              {parsed.errorLog.length === 0
+                ? <div style={{ fontSize: 12, color: '#22C55E' }}>No issues found — all records parsed successfully.</div>
+                : parsed.errorLog.map((e, i) => <div key={i} style={{ fontSize: 11, color: '#F59E0B', borderBottom: '1px solid var(--ec-border)', padding: '4px 0' }}>⚠ {e}</div>)
+              }
+            </div>
+          )}
+
+          {/* History */}
+          {activeTab === 'history' && (
+            <div style={{ ...card(), marginBottom: 14, overflowX: 'auto' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Import Batch History</div>
+              {importBatches.length === 0
+                ? <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>No import batches recorded yet.</div>
+                : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr>{['Filename','Imported At','Sheets','Created','Flagged','Status'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {[...importBatches].reverse().map((b, i) => (
+                        <tr key={b.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                          <td style={td({ fontWeight: 600 })}>{b.filename}</td>
+                          <td style={td({ fontSize: 10 })}>{new Date(b.importedAt).toLocaleString()}</td>
+                          <td style={td()}>{b.sheetCount}</td>
+                          <td style={td({ color: '#22C55E' })}>{b.recordsCreated}</td>
+                          <td style={td({ color: b.recordsFlagged > 0 ? '#F59E0B' : 'var(--ec-text-muted)' })}>{b.recordsFlagged}</td>
+                          <td style={td()}><span style={{ color: b.status === 'Completed' ? '#22C55E' : b.status === 'Partial' ? '#F59E0B' : '#EF4444', fontWeight: 700, fontSize: 10 }}>{b.status}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )
+              }
+            </div>
+          )}
+
+          {/* Step 3 — commit */}
+          {activeTab !== 'history' && (
+            <div style={{ ...card(), marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 3 — Commit Import</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 10 }}>
+                <input type="checkbox" checked={mergeMode} onChange={e => setMergeMode(e.target.checked)} />
+                <span style={{ fontSize: 12, color: 'var(--ec-text-secondary)' }}>
+                  Merge mode — skip duplicate panels/feeders (matched by ID), only add new records
+                </span>
+              </label>
+              {!mergeMode && (
+                <div style={{ background: '#EF444422', border: '1px solid #EF444455', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#EF4444' }}>
+                  Replace mode — existing panels and feeders will be overwritten.
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 12 }}>
+                Ready to commit: {parsed.panels.length} panels · {parsed.loads.length} loads · {parsed.feeders.length} feeders
+                {parsed.errorLog.length > 0 && <span style={{ color: '#F59E0B', marginLeft: 8 }}>· {parsed.errorLog.length} flagged rows excluded</span>}
+              </div>
+              {imported ? (
+                <div style={{ background: '#22C55E22', border: '1px solid #22C55E55', borderRadius: 10, padding: 14, fontSize: 13, color: '#22C55E' }}>
+                  Import complete — {imported.panels} panels, {imported.loads} loads, {imported.feeders} feeders committed.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button style={btn('#22C55E')} onClick={doImport}>
+                    <CheckCircle style={{ width: 14, height: 14 }} /> Commit {parsed.panels.length + parsed.loads.length + parsed.feeders.length} Records
+                  </button>
+                  <button style={btn('#475569')} onClick={() => { setParsed(null); setFileName(''); }}>Cancel</button>
+                </div>
+              )}
             </div>
           )}
         </>

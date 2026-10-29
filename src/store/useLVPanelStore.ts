@@ -110,24 +110,160 @@ export interface LVFeeder {
   createdAt: string;
 }
 
+export type MeteringPriority = 'Critical' | 'High' | 'Normal' | 'Low';
+export type EmsStatus = 'Integrated' | 'Planned' | 'Not Applicable' | 'Pending' | 'Not Available';
+
+export interface LVMeterPhoto {
+  name: string; size: number; type: string; uploadedAt: string;
+  /** Base64 data URL — only stored for images ≤ 500 KB */
+  dataUrl?: string;
+}
+
 export interface LVMeter {
-  id: string; meterRef: string; panelId: string; meterType: string;
-  ctRatio: string; accuracy: string; serialNumber: string;
-  installationStatus: 'Pending' | 'Installed' | 'Calibrated'; remarks: string;
+  id: string;
+  meterRef: string;
+  panelId: string;
+  feederId: string;
+  equipmentDescription: string;
+  meterRequired: boolean;
+  meterInstalled: boolean;
+  manufacturer: string;
+  model: string;
+  meterType: string;
+  ctRatio: string;
+  ctAccuracyClass: string;
+  ctQuantity: number;
+  meteringPriority: MeteringPriority;
+  communicationProtocol: string;
+  emsIntegrationStatus: EmsStatus;
+  serialNumber: string;
+  installationStatus: 'Pending' | 'Installed' | 'Calibrated';
+  remarks: string;
+  photos: LVMeterPhoto[];
+}
+
+export interface LVDrawingRevision {
+  rev: string; date: string; description: string; author: string;
 }
 
 export interface LVDrawing {
-  id: string; drawingNo: string; title: string; discipline: string;
-  revision: string; date: string;
+  id: string;
+  drawingNo: string;
+  title: string;
+  category: string;
+  discipline: string;
+  associatedPanel: string;
+  revision: string;
+  date: string;
   status: 'Draft' | 'Issued for Approval' | 'Issued for Construction' | 'As-Built';
-  relatedPanels: string; remarks: string;
+  approvalStatus: 'Pending' | 'Approved' | 'Rejected' | 'Not Required';
+  fileRef: string;
+  /** Data URL only for images ≤ 500 KB */
+  fileDataUrl?: string;
+  revisionHistory: LVDrawingRevision[];
+  remarks: string;
+}
+
+export type CalcType = 'Current' | 'VoltageDrop' | 'MaxDemand' | 'PowerFactor' | 'Other';
+export type VerificationStatus = 'Unverified' | 'Engineer Reviewed' | 'Approved';
+
+export interface LVCalcInput {
+  param: string; value: string; unit: string;
+}
+
+export interface LVCalcRecord {
+  id: string;
+  calcType: CalcType;
+  panelId: string;
+  feederRef: string;
+  description: string;
+  inputs: LVCalcInput[];
+  method: string;
+  formula: string;
+  result: string;
+  unit: string;
+  sourceWorksheet: string;
+  verificationStatus: VerificationStatus;
+  verifiedBy: string;
+  notes: string;
+  createdAt: string;
+}
+
+export interface LVBreakerState {
+  breakerRef: string;
+  normalState: 'Open' | 'Closed' | 'N/A';
+  blackoutState: 'Open' | 'Closed' | 'N/A';
+  returnState: 'Open' | 'Closed' | 'N/A';
+}
+
+export interface LVSwitchingRecord {
+  id: string;
+  powerSource: string;
+  transformerRef: string;
+  busCouplerRef: string;
+  dgRef: string;
+  normalCondition: string;
+  blackoutCondition: string;
+  returnToNormal: string;
+  breakerStates: LVBreakerState[];
+  interlockingReqs: string;
+  operatingRemarks: string;
+  relatedDrawings: string;
+  verificationStatus: VerificationStatus;
+  createdAt: string;
+}
+
+export type SiteVerifStatus =
+  | 'Pending'
+  | 'In Progress'
+  | 'Observation Raised'
+  | 'Corrective Action Pending'
+  | 'Ready for Reinspection'
+  | 'Verified'
+  | 'Closed';
+
+export const SITE_VERIF_STATUSES: SiteVerifStatus[] = [
+  'Pending', 'In Progress', 'Observation Raised', 'Corrective Action Pending',
+  'Ready for Reinspection', 'Verified', 'Closed',
+];
+
+export type CheckResult = 'Pass' | 'Fail' | 'N/A' | 'Pending';
+
+export interface LVAuditEntry {
+  timestamp: string; changedBy: string; field: string;
+  previousValue: string; newValue: string;
+}
+
+export interface LVImportBatch {
+  id: string; filename: string; importedAt: string; sheetCount: number;
+  recordsCreated: number; recordsSkipped: number; recordsFlagged: number;
+  status: 'Completed' | 'Partial' | 'Failed'; errorLog: string[];
 }
 
 export interface LVInspection {
-  id: string; panelId: string; inspectionDate: string; inspector: string;
-  type: 'Visual' | 'Functional' | 'Commissioning';
-  status: 'Pending' | 'Passed' | 'Failed' | 'Conditional';
-  findings: string; actionRequired: string; remarks: string;
+  id: string;
+  panelId: string;
+  feederId: string;
+  inspectionDate: string;
+  inspector: string;
+  inspectionType: string;
+  cableSizeVerified: CheckResult;
+  breakerRatingVerified: CheckResult;
+  cableTerminationStatus: CheckResult;
+  cableTaggingStatus: CheckResult;
+  earthingVerified: CheckResult;
+  meterInstallVerified: CheckResult;
+  drawingCompliance: CheckResult;
+  photographicEvidence: LVMeterPhoto[];
+  observations: string;
+  correctiveActions: string;
+  responsiblePerson: string;
+  targetCompletionDate: string;
+  closureDate: string;
+  status: SiteVerifStatus;
+  createdAt: string;
+  updatedAt: string;
+  auditTrail: LVAuditEntry[];
 }
 
 export interface LVDocument {
@@ -198,6 +334,52 @@ function migrateLoad(raw: Record<string, unknown>): LVLoad {
   };
 }
 
+/** Migrate stored meters — adds missing fields */
+function migrateMeter(raw: Record<string, unknown>): LVMeter {
+  return {
+    id: String(raw.id ?? uid()),
+    meterRef: String(raw.meterRef ?? ''),
+    panelId: String(raw.panelId ?? ''),
+    feederId: String(raw.feederId ?? ''),
+    equipmentDescription: String(raw.equipmentDescription ?? ''),
+    meterRequired: raw.meterRequired !== false,
+    meterInstalled: Boolean(raw.meterInstalled ?? raw.installationStatus === 'Installed'),
+    manufacturer: String(raw.manufacturer ?? ''),
+    model: String(raw.model ?? ''),
+    meterType: String(raw.meterType ?? ''),
+    ctRatio: String(raw.ctRatio ?? ''),
+    ctAccuracyClass: String(raw.ctAccuracyClass ?? raw.accuracy ?? ''),
+    ctQuantity: Number(raw.ctQuantity ?? 1),
+    meteringPriority: (raw.meteringPriority as MeteringPriority) ?? 'Normal',
+    communicationProtocol: String(raw.communicationProtocol ?? ''),
+    emsIntegrationStatus: (raw.emsIntegrationStatus as EmsStatus) ?? 'Not Applicable',
+    serialNumber: String(raw.serialNumber ?? ''),
+    installationStatus: (raw.installationStatus as LVMeter['installationStatus']) ?? 'Pending',
+    remarks: String(raw.remarks ?? ''),
+    photos: (raw.photos as LVMeterPhoto[]) ?? [],
+  };
+}
+
+/** Migrate stored drawings — adds missing fields */
+function migrateDrawing(raw: Record<string, unknown>): LVDrawing {
+  return {
+    id: String(raw.id ?? uid()),
+    drawingNo: String(raw.drawingNo ?? ''),
+    title: String(raw.title ?? ''),
+    category: String(raw.category ?? 'Electrical'),
+    discipline: String(raw.discipline ?? 'Electrical'),
+    associatedPanel: String(raw.associatedPanel ?? raw.relatedPanels ?? ''),
+    revision: String(raw.revision ?? 'Rev.0'),
+    date: String(raw.date ?? ''),
+    status: (raw.status as LVDrawing['status']) ?? 'Draft',
+    approvalStatus: (raw.approvalStatus as LVDrawing['approvalStatus']) ?? 'Pending',
+    fileRef: String(raw.fileRef ?? ''),
+    fileDataUrl: raw.fileDataUrl as string | undefined,
+    revisionHistory: (raw.revisionHistory as LVDrawingRevision[]) ?? [],
+    remarks: String(raw.remarks ?? ''),
+  };
+}
+
 /** Migrate stored feeders — adds missing fields */
 function migrateFeeder(raw: Record<string, unknown>): LVFeeder {
   return {
@@ -231,6 +413,36 @@ function migrateFeeder(raw: Record<string, unknown>): LVFeeder {
   };
 }
 
+/** Migrate stored inspections — maps old fields to new interface */
+function migrateInspection(raw: Record<string, unknown>): LVInspection {
+  const chk = (v: unknown): CheckResult => (['Pass','Fail','N/A','Pending'].includes(v as string) ? v as CheckResult : 'Pending');
+  return {
+    id: String(raw.id ?? uid()),
+    panelId: String(raw.panelId ?? ''),
+    feederId: String(raw.feederId ?? ''),
+    inspectionDate: String(raw.inspectionDate ?? ''),
+    inspector: String(raw.inspector ?? ''),
+    inspectionType: String(raw.inspectionType ?? raw.type ?? 'Visual'),
+    cableSizeVerified: chk(raw.cableSizeVerified),
+    breakerRatingVerified: chk(raw.breakerRatingVerified),
+    cableTerminationStatus: chk(raw.cableTerminationStatus),
+    cableTaggingStatus: chk(raw.cableTaggingStatus),
+    earthingVerified: chk(raw.earthingVerified),
+    meterInstallVerified: chk(raw.meterInstallVerified),
+    drawingCompliance: chk(raw.drawingCompliance),
+    photographicEvidence: (raw.photographicEvidence as LVMeterPhoto[]) ?? [],
+    observations: String(raw.observations ?? raw.findings ?? ''),
+    correctiveActions: String(raw.correctiveActions ?? raw.actionRequired ?? ''),
+    responsiblePerson: String(raw.responsiblePerson ?? ''),
+    targetCompletionDate: String(raw.targetCompletionDate ?? ''),
+    closureDate: String(raw.closureDate ?? ''),
+    status: (SITE_VERIF_STATUSES.includes(raw.status as SiteVerifStatus) ? raw.status : 'Pending') as SiteVerifStatus,
+    createdAt: String(raw.createdAt ?? now()),
+    updatedAt: String(raw.updatedAt ?? now()),
+    auditTrail: (raw.auditTrail as LVAuditEntry[]) ?? [],
+  };
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 interface LVPanelState {
@@ -242,6 +454,9 @@ interface LVPanelState {
   drawings: LVDrawing[];
   inspections: LVInspection[];
   documents: LVDocument[];
+  calcs: LVCalcRecord[];
+  switchingRecords: LVSwitchingRecord[];
+  importBatches: LVImportBatch[];
 
   setProjectInfo: (info: Partial<LVProjectInfo>) => void;
   addPanel: (p: Omit<LVPanel, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -265,6 +480,13 @@ interface LVPanelState {
   addDocument: (d: Omit<LVDocument, 'id'>) => void;
   updateDocument: (id: string, d: Partial<LVDocument>) => void;
   deleteDocument: (id: string) => void;
+  addCalc: (c: Omit<LVCalcRecord, 'id' | 'createdAt'>) => void;
+  updateCalc: (id: string, c: Partial<LVCalcRecord>) => void;
+  deleteCalc: (id: string) => void;
+  addSwitchingRecord: (r: Omit<LVSwitchingRecord, 'id' | 'createdAt'>) => void;
+  updateSwitchingRecord: (id: string, r: Partial<LVSwitchingRecord>) => void;
+  deleteSwitchingRecord: (id: string) => void;
+  addImportBatch: (b: Omit<LVImportBatch, 'id'>) => void;
   importPanels: (panels: Omit<LVPanel, 'id' | 'createdAt' | 'updatedAt'>[], merge?: boolean) => void;
   importFeeders: (feeders: Omit<LVFeeder, 'id' | 'createdAt'>[], merge?: boolean) => void;
   importLoads: (loads: Omit<LVLoad, 'id'>[], merge?: boolean) => void;
@@ -276,10 +498,13 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
   panels: loadLS<LVPanel[]>('panels', []),
   feeders: (loadLS<Record<string, unknown>[]>('feeders', [])).map(migrateFeeder),
   loads: (loadLS<Record<string, unknown>[]>('loads', [])).map(migrateLoad),
-  meters: loadLS<LVMeter[]>('meters', []),
-  drawings: loadLS<LVDrawing[]>('drawings', []),
-  inspections: loadLS<LVInspection[]>('inspections', []),
+  meters: (loadLS<Record<string, unknown>[]>('meters', [])).map(migrateMeter),
+  drawings: (loadLS<Record<string, unknown>[]>('drawings', [])).map(migrateDrawing),
+  inspections: (loadLS<Record<string, unknown>[]>('inspections', [])).map(migrateInspection),
   documents: loadLS<LVDocument[]>('documents', []),
+  calcs: loadLS<LVCalcRecord[]>('calcs', []),
+  switchingRecords: loadLS<LVSwitchingRecord[]>('switching', []),
+  importBatches: loadLS<LVImportBatch[]>('importBatches', []),
 
   setProjectInfo: (info) => {
     const updated = { ...get().projectInfo, ...info };
@@ -326,7 +551,7 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
   },
 
   addMeter: (m) => {
-    const meters = [...get().meters, { ...m, id: uid() }];
+    const meters = [...get().meters, migrateMeter({ ...m, id: uid() })];
     saveLS('meters', meters); set({ meters });
   },
   updateMeter: (id, m) => {
@@ -339,7 +564,7 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
   },
 
   addDrawing: (d) => {
-    const drawings = [...get().drawings, { ...d, id: uid() }];
+    const drawings = [...get().drawings, migrateDrawing({ ...d, id: uid() })];
     saveLS('drawings', drawings); set({ drawings });
   },
   updateDrawing: (id, d) => {
@@ -352,11 +577,12 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
   },
 
   addInspection: (i) => {
-    const inspections = [...get().inspections, { ...i, id: uid() }];
+    const insp = migrateInspection({ ...i, id: uid() });
+    const inspections = [...get().inspections, insp];
     saveLS('inspections', inspections); set({ inspections });
   },
   updateInspection: (id, i) => {
-    const inspections = get().inspections.map(x => x.id === id ? { ...x, ...i } : x);
+    const inspections = get().inspections.map(x => x.id === id ? migrateInspection({ ...x, ...i, updatedAt: now() }) : x);
     saveLS('inspections', inspections); set({ inspections });
   },
   deleteInspection: (id) => {
@@ -375,6 +601,37 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
   deleteDocument: (id) => {
     const documents = get().documents.filter(x => x.id !== id);
     saveLS('documents', documents); set({ documents });
+  },
+
+  addCalc: (c) => {
+    const calcs = [...get().calcs, { ...c, id: uid(), createdAt: now() }];
+    saveLS('calcs', calcs); set({ calcs });
+  },
+  updateCalc: (id, c) => {
+    const calcs = get().calcs.map(x => x.id === id ? { ...x, ...c } : x);
+    saveLS('calcs', calcs); set({ calcs });
+  },
+  deleteCalc: (id) => {
+    const calcs = get().calcs.filter(x => x.id !== id);
+    saveLS('calcs', calcs); set({ calcs });
+  },
+
+  addSwitchingRecord: (r) => {
+    const switchingRecords = [...get().switchingRecords, { ...r, id: uid(), createdAt: now() }];
+    saveLS('switching', switchingRecords); set({ switchingRecords });
+  },
+  updateSwitchingRecord: (id, r) => {
+    const switchingRecords = get().switchingRecords.map(x => x.id === id ? { ...x, ...r } : x);
+    saveLS('switching', switchingRecords); set({ switchingRecords });
+  },
+  deleteSwitchingRecord: (id) => {
+    const switchingRecords = get().switchingRecords.filter(x => x.id !== id);
+    saveLS('switching', switchingRecords); set({ switchingRecords });
+  },
+
+  addImportBatch: (b) => {
+    const importBatches = [...get().importBatches, { ...b, id: uid() }];
+    saveLS('importBatches', importBatches); set({ importBatches });
   },
 
   importPanels: (panels, merge = false) => {
@@ -405,7 +662,7 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
   },
 
   clearAll: () => {
-    ['panels', 'feeders', 'loads', 'meters', 'drawings', 'inspections', 'documents'].forEach(k => saveLS(k, []));
-    set({ panels: [], feeders: [], loads: [], meters: [], drawings: [], inspections: [], documents: [] });
+    ['panels','feeders','loads','meters','drawings','inspections','documents','calcs','switching','importBatches'].forEach(k => saveLS(k, []));
+    set({ panels: [], feeders: [], loads: [], meters: [], drawings: [], inspections: [], documents: [], calcs: [], switchingRecords: [], importBatches: [] });
   },
 }));
