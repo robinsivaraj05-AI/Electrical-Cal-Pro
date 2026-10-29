@@ -6,6 +6,26 @@ export type PanelType = 'MDB' | 'SMDB' | 'MCC' | 'DB' | 'EDB' | 'ESMDB' | 'SDB' 
 export type InstallStatus = 'Not Started' | 'In Progress' | 'Completed';
 export type InspStatus = 'Pending' | 'Scheduled' | 'Passed' | 'Failed';
 
+export type FeederInstallStatus =
+  | 'Not Started'
+  | 'Cable Required'
+  | 'Cable Laid'
+  | 'Termination Pending'
+  | 'Terminated'
+  | 'Field Verification Pending'
+  | 'Verified'
+  | 'Cable Not Connected'
+  | 'Completed'
+  | 'On Hold';
+
+export const FEEDER_INSTALL_STATUSES: FeederInstallStatus[] = [
+  'Not Started', 'Cable Required', 'Cable Laid', 'Termination Pending',
+  'Terminated', 'Field Verification Pending', 'Verified',
+  'Cable Not Connected', 'Completed', 'On Hold',
+];
+
+export const FIELD_VERIFY_STATUSES = ['Pending', 'In Progress', 'Verified', 'Not Required', 'Failed'] as const;
+
 export interface LVPanel {
   id: string; panelId: string; panelName: string; panelType: PanelType;
   electricalArea: string; location: string; parentPanel: string;
@@ -18,21 +38,76 @@ export interface LVPanel {
   createdAt: string; updatedAt: string;
 }
 
-export interface LVFeeder {
-  id: string; feederRef: string; fromPanel: string; toPanel: string;
-  description: string; area: string; loadKW: number; loadPF: number;
-  phases: 1 | 3; voltage: number; designCurrentA: number;
-  cableSize: string; cableType: string; cableLength: number; numRuns: number;
-  breakerRating: number; breakerType: string; demandFactor: number;
-  installationStatus: 'Pending' | 'Installed' | 'Verified'; remarks: string; createdAt: string;
+export interface LVLoad {
+  id: string;
+  panelId: string;
+  circuitRef: string;
+  /** Feeder or equipment description */
+  description: string;
+  /** Equipment name (tag or nameplate label) */
+  equipmentName: string;
+  area: string;
+  loadCategory: string;
+  /**
+   * Load Factor = average demand / peak demand over a period.
+   * This is an operational characteristic of the load, NOT used to reduce
+   * connected load in demand calculations. Range 0–1.
+   */
+  loadFactor: number;
+  ratedKW: number;
+  powerFactor: number;
+  phases: 1 | 3;
+  voltage: number;
+  quantity: number;
+  /**
+   * Demand Factor = maximum demand / total connected load.
+   * Applied as: Maximum Demand = Total Connected Load × Demand Factor.
+   * Range 0–1 (occasionally >1 for future-proofing). Default 1.0.
+   */
+  demandFactor: number;
+  /** Operating current (A) — derived from kW, PF, V, phases */
+  designCurrentA: number;
+  startingCurrentA: number;
+  breakerType: string;
+  breakerRating: number;
+  /** Fault-duty rating of the protective device (kA) */
+  faultDutyKA: number;
+  cableType: string;
+  cableSize: string;
+  earthingConductorSize: string;
+  remarks: string;
 }
 
-export interface LVLoad {
-  id: string; panelId: string; circuitRef: string; description: string;
-  area: string; loadType: string; ratedKW: number; powerFactor: number;
-  phases: 1 | 3; voltage: number; demandFactor: number; quantity: number;
-  designCurrentA: number; startingCurrentA: number; breakerRating: number;
-  cableSize: string; remarks: string;
+export interface LVFeeder {
+  id: string;
+  serialNo: string;
+  feederRef: string;
+  fromPanel: string;
+  toPanel: string;
+  description: string;
+  area: string;
+  loadKW: number;
+  loadPF: number;
+  phases: 1 | 3;
+  voltage: number;
+  designCurrentA: number;
+  cableSize: string;
+  cableType: string;
+  numCores: number;
+  /** Required cable length from design drawings (m) */
+  requiredLengthM: number;
+  /** Actual installed cable length measured on site (m) */
+  actualLengthM: number;
+  numRuns: number;
+  breakerRating: number;
+  breakerType: string;
+  demandFactor: number;
+  earthingCableSize: string;
+  installationStatus: FeederInstallStatus;
+  fieldVerificationStatus: string;
+  inspectionRemarks: string;
+  remarks: string;
+  createdAt: string;
 }
 
 export interface LVMeter {
@@ -80,27 +155,83 @@ const defaultProject: LVProjectInfo = {
 
 const LS_PREFIX = 'elec-lv-';
 
-function load<T>(key: string, fallback: T): T {
+function loadLS<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(LS_PREFIX + key);
     return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
+  } catch { return fallback; }
 }
 
-function save<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
-  } catch {
-    // ignore quota errors
-  }
+function saveLS<T>(key: string, value: T): void {
+  try { localStorage.setItem(LS_PREFIX + key, JSON.stringify(value)); } catch { /* quota */ }
 }
 
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const now = () => new Date().toISOString();
 
-// ─── Store Interface ──────────────────────────────────────────────────────────
+/** Migrate stored loads — adds missing fields introduced in later versions */
+function migrateLoad(raw: Record<string, unknown>): LVLoad {
+  return {
+    id: String(raw.id ?? uid()),
+    panelId: String(raw.panelId ?? ''),
+    circuitRef: String(raw.circuitRef ?? ''),
+    description: String(raw.description ?? ''),
+    equipmentName: String(raw.equipmentName ?? ''),
+    area: String(raw.area ?? ''),
+    loadCategory: String(raw.loadCategory ?? raw.loadType ?? 'General'),
+    loadFactor: Number(raw.loadFactor ?? 1),
+    ratedKW: Number(raw.ratedKW ?? 0),
+    powerFactor: Number(raw.powerFactor ?? 0.85),
+    phases: (raw.phases === 1 || raw.phases === '1') ? 1 : 3,
+    voltage: Number(raw.voltage ?? 400),
+    quantity: Number(raw.quantity ?? 1),
+    demandFactor: Number(raw.demandFactor ?? 1),
+    designCurrentA: Number(raw.designCurrentA ?? 0),
+    startingCurrentA: Number(raw.startingCurrentA ?? 0),
+    breakerType: String(raw.breakerType ?? 'MCB'),
+    breakerRating: Number(raw.breakerRating ?? 0),
+    faultDutyKA: Number(raw.faultDutyKA ?? 0),
+    cableType: String(raw.cableType ?? ''),
+    cableSize: String(raw.cableSize ?? ''),
+    earthingConductorSize: String(raw.earthingConductorSize ?? ''),
+    remarks: String(raw.remarks ?? ''),
+  };
+}
+
+/** Migrate stored feeders — adds missing fields */
+function migrateFeeder(raw: Record<string, unknown>): LVFeeder {
+  return {
+    id: String(raw.id ?? uid()),
+    serialNo: String(raw.serialNo ?? ''),
+    feederRef: String(raw.feederRef ?? ''),
+    fromPanel: String(raw.fromPanel ?? ''),
+    toPanel: String(raw.toPanel ?? ''),
+    description: String(raw.description ?? ''),
+    area: String(raw.area ?? ''),
+    loadKW: Number(raw.loadKW ?? 0),
+    loadPF: Number(raw.loadPF ?? 0.85),
+    phases: (raw.phases === 1 || raw.phases === '1') ? 1 : 3,
+    voltage: Number(raw.voltage ?? 400),
+    designCurrentA: Number(raw.designCurrentA ?? 0),
+    cableSize: String(raw.cableSize ?? ''),
+    cableType: String(raw.cableType ?? ''),
+    numCores: Number(raw.numCores ?? 4),
+    requiredLengthM: Number(raw.requiredLengthM ?? raw.cableLength ?? 0),
+    actualLengthM: Number(raw.actualLengthM ?? 0),
+    numRuns: Number(raw.numRuns ?? 1),
+    breakerRating: Number(raw.breakerRating ?? 0),
+    breakerType: String(raw.breakerType ?? 'MCCB'),
+    demandFactor: Number(raw.demandFactor ?? 1),
+    earthingCableSize: String(raw.earthingCableSize ?? ''),
+    installationStatus: (raw.installationStatus as FeederInstallStatus) ?? 'Not Started',
+    fieldVerificationStatus: String(raw.fieldVerificationStatus ?? 'Pending'),
+    inspectionRemarks: String(raw.inspectionRemarks ?? ''),
+    remarks: String(raw.remarks ?? ''),
+    createdAt: String(raw.createdAt ?? now()),
+  };
+}
+
+// ─── Store ────────────────────────────────────────────────────────────────────
 
 interface LVPanelState {
   projectInfo: LVProjectInfo;
@@ -140,203 +271,141 @@ interface LVPanelState {
   clearAll: () => void;
 }
 
-// ─── Store ────────────────────────────────────────────────────────────────────
-
 export const useLVPanelStore = create<LVPanelState>((set, get) => ({
-  projectInfo: load<LVProjectInfo>('project', defaultProject),
-  panels: load<LVPanel[]>('panels', []),
-  feeders: load<LVFeeder[]>('feeders', []),
-  loads: load<LVLoad[]>('loads', []),
-  meters: load<LVMeter[]>('meters', []),
-  drawings: load<LVDrawing[]>('drawings', []),
-  inspections: load<LVInspection[]>('inspections', []),
-  documents: load<LVDocument[]>('documents', []),
+  projectInfo: loadLS<LVProjectInfo>('project', defaultProject),
+  panels: loadLS<LVPanel[]>('panels', []),
+  feeders: (loadLS<Record<string, unknown>[]>('feeders', [])).map(migrateFeeder),
+  loads: (loadLS<Record<string, unknown>[]>('loads', [])).map(migrateLoad),
+  meters: loadLS<LVMeter[]>('meters', []),
+  drawings: loadLS<LVDrawing[]>('drawings', []),
+  inspections: loadLS<LVInspection[]>('inspections', []),
+  documents: loadLS<LVDocument[]>('documents', []),
 
   setProjectInfo: (info) => {
     const updated = { ...get().projectInfo, ...info };
-    save('project', updated);
-    set({ projectInfo: updated });
+    saveLS('project', updated); set({ projectInfo: updated });
   },
 
   addPanel: (p) => {
-    const panel: LVPanel = { ...p, id: uid(), createdAt: now(), updatedAt: now() };
-    const panels = [...get().panels, panel];
-    save('panels', panels);
-    set({ panels });
+    const panels = [...get().panels, { ...p, id: uid(), createdAt: now(), updatedAt: now() }];
+    saveLS('panels', panels); set({ panels });
   },
-
   updatePanel: (id, p) => {
     const panels = get().panels.map(x => x.id === id ? { ...x, ...p, updatedAt: now() } : x);
-    save('panels', panels);
-    set({ panels });
+    saveLS('panels', panels); set({ panels });
   },
-
   deletePanel: (id) => {
     const panels = get().panels.filter(x => x.id !== id);
-    save('panels', panels);
-    set({ panels });
+    saveLS('panels', panels); set({ panels });
   },
 
   addFeeder: (f) => {
-    const feeder: LVFeeder = { ...f, id: uid(), createdAt: now() };
-    const feeders = [...get().feeders, feeder];
-    save('feeders', feeders);
-    set({ feeders });
+    const feeders = [...get().feeders, migrateFeeder({ ...f, id: uid(), createdAt: now() })];
+    saveLS('feeders', feeders); set({ feeders });
   },
-
   updateFeeder: (id, f) => {
     const feeders = get().feeders.map(x => x.id === id ? { ...x, ...f } : x);
-    save('feeders', feeders);
-    set({ feeders });
+    saveLS('feeders', feeders); set({ feeders });
   },
-
   deleteFeeder: (id) => {
     const feeders = get().feeders.filter(x => x.id !== id);
-    save('feeders', feeders);
-    set({ feeders });
+    saveLS('feeders', feeders); set({ feeders });
   },
 
   addLoad: (l) => {
-    const lObj: LVLoad = { ...l, id: uid() };
-    const loads = [...get().loads, lObj];
-    save('loads', loads);
-    set({ loads });
+    const loads = [...get().loads, migrateLoad({ ...l, id: uid() })];
+    saveLS('loads', loads); set({ loads });
   },
-
   updateLoad: (id, l) => {
     const loads = get().loads.map(x => x.id === id ? { ...x, ...l } : x);
-    save('loads', loads);
-    set({ loads });
+    saveLS('loads', loads); set({ loads });
   },
-
   deleteLoad: (id) => {
     const loads = get().loads.filter(x => x.id !== id);
-    save('loads', loads);
-    set({ loads });
+    saveLS('loads', loads); set({ loads });
   },
 
   addMeter: (m) => {
-    const meter: LVMeter = { ...m, id: uid() };
-    const meters = [...get().meters, meter];
-    save('meters', meters);
-    set({ meters });
+    const meters = [...get().meters, { ...m, id: uid() }];
+    saveLS('meters', meters); set({ meters });
   },
-
   updateMeter: (id, m) => {
     const meters = get().meters.map(x => x.id === id ? { ...x, ...m } : x);
-    save('meters', meters);
-    set({ meters });
+    saveLS('meters', meters); set({ meters });
   },
-
   deleteMeter: (id) => {
     const meters = get().meters.filter(x => x.id !== id);
-    save('meters', meters);
-    set({ meters });
+    saveLS('meters', meters); set({ meters });
   },
 
   addDrawing: (d) => {
-    const drawing: LVDrawing = { ...d, id: uid() };
-    const drawings = [...get().drawings, drawing];
-    save('drawings', drawings);
-    set({ drawings });
+    const drawings = [...get().drawings, { ...d, id: uid() }];
+    saveLS('drawings', drawings); set({ drawings });
   },
-
   updateDrawing: (id, d) => {
     const drawings = get().drawings.map(x => x.id === id ? { ...x, ...d } : x);
-    save('drawings', drawings);
-    set({ drawings });
+    saveLS('drawings', drawings); set({ drawings });
   },
-
   deleteDrawing: (id) => {
     const drawings = get().drawings.filter(x => x.id !== id);
-    save('drawings', drawings);
-    set({ drawings });
+    saveLS('drawings', drawings); set({ drawings });
   },
 
   addInspection: (i) => {
-    const inspection: LVInspection = { ...i, id: uid() };
-    const inspections = [...get().inspections, inspection];
-    save('inspections', inspections);
-    set({ inspections });
+    const inspections = [...get().inspections, { ...i, id: uid() }];
+    saveLS('inspections', inspections); set({ inspections });
   },
-
   updateInspection: (id, i) => {
     const inspections = get().inspections.map(x => x.id === id ? { ...x, ...i } : x);
-    save('inspections', inspections);
-    set({ inspections });
+    saveLS('inspections', inspections); set({ inspections });
   },
-
   deleteInspection: (id) => {
     const inspections = get().inspections.filter(x => x.id !== id);
-    save('inspections', inspections);
-    set({ inspections });
+    saveLS('inspections', inspections); set({ inspections });
   },
 
   addDocument: (d) => {
-    const doc: LVDocument = { ...d, id: uid() };
-    const documents = [...get().documents, doc];
-    save('documents', documents);
-    set({ documents });
+    const documents = [...get().documents, { ...d, id: uid() }];
+    saveLS('documents', documents); set({ documents });
   },
-
   updateDocument: (id, d) => {
     const documents = get().documents.map(x => x.id === id ? { ...x, ...d } : x);
-    save('documents', documents);
-    set({ documents });
+    saveLS('documents', documents); set({ documents });
   },
-
   deleteDocument: (id) => {
     const documents = get().documents.filter(x => x.id !== id);
-    save('documents', documents);
-    set({ documents });
+    saveLS('documents', documents); set({ documents });
   },
 
   importPanels: (panels, merge = false) => {
     const existing = get().panels;
     const existingIds = new Set(existing.map(p => p.panelId));
-    const toAdd = merge
-      ? panels.filter(p => !existingIds.has(p.panelId))
-      : panels;
     const newPanels = merge
-      ? [...existing, ...toAdd.map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }))]
+      ? [...existing, ...panels.filter(p => !existingIds.has(p.panelId)).map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }))]
       : panels.map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }));
-    save('panels', newPanels);
-    set({ panels: newPanels });
+    saveLS('panels', newPanels); set({ panels: newPanels });
   },
 
   importFeeders: (feeders, merge = false) => {
     const existing = get().feeders;
     const existingRefs = new Set(existing.map(f => f.feederRef));
-    const toAdd = merge
-      ? feeders.filter(f => !existingRefs.has(f.feederRef))
-      : feeders;
+    const toAdd = merge ? feeders.filter(f => !existingRefs.has(f.feederRef)) : feeders;
     const newFeeders = merge
-      ? [...existing, ...toAdd.map(f => ({ ...f, id: uid(), createdAt: now() }))]
-      : feeders.map(f => ({ ...f, id: uid(), createdAt: now() }));
-    save('feeders', newFeeders);
-    set({ feeders: newFeeders });
+      ? [...existing, ...toAdd.map(f => migrateFeeder({ ...f, id: uid(), createdAt: now() }))]
+      : feeders.map(f => migrateFeeder({ ...f, id: uid(), createdAt: now() }));
+    saveLS('feeders', newFeeders); set({ feeders: newFeeders });
   },
 
   importLoads: (loads, merge = false) => {
     const existing = get().loads;
     const newLoads = merge
-      ? [...existing, ...loads.map(l => ({ ...l, id: uid() }))]
-      : loads.map(l => ({ ...l, id: uid() }));
-    save('loads', newLoads);
-    set({ loads: newLoads });
+      ? [...existing, ...loads.map(l => migrateLoad({ ...l, id: uid() }))]
+      : loads.map(l => migrateLoad({ ...l, id: uid() }));
+    saveLS('loads', newLoads); set({ loads: newLoads });
   },
 
   clearAll: () => {
-    save('panels', []);
-    save('feeders', []);
-    save('loads', []);
-    save('meters', []);
-    save('drawings', []);
-    save('inspections', []);
-    save('documents', []);
-    set({
-      panels: [], feeders: [], loads: [], meters: [],
-      drawings: [], inspections: [], documents: [],
-    });
+    ['panels', 'feeders', 'loads', 'meters', 'drawings', 'inspections', 'documents'].forEach(k => saveLS(k, []));
+    set({ panels: [], feeders: [], loads: [], meters: [], drawings: [], inspections: [], documents: [] });
   },
 }));

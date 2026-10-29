@@ -6,7 +6,7 @@ import {
   Plus, Pencil, Trash2, Search, CheckCircle, XCircle, Clock,
   ChevronRight, ChevronDown, RefreshCw, AlertCircle,
 } from 'lucide-react';
-import { useLVPanelStore } from '../../store/useLVPanelStore';
+import { useLVPanelStore, FEEDER_INSTALL_STATUSES } from '../../store/useLVPanelStore';
 import type {
   LVPanel, LVFeeder, LVLoad, LVMeter, LVDrawing, LVInspection, LVDocument,
 } from '../../store/useLVPanelStore';
@@ -443,28 +443,58 @@ function PanelRegister() {
 // ─── SECTION: Load Schedule ───────────────────────────────────────────────────
 
 const LOAD_DEFAULTS: Omit<LVLoad, 'id'> = {
-  panelId: '', circuitRef: '', description: '', area: '', loadType: 'General',
+  panelId: '', circuitRef: '', description: '', equipmentName: '',
+  area: '', loadCategory: 'General', loadFactor: 1,
   ratedKW: 0, powerFactor: 0.85, phases: 3, voltage: 400,
-  demandFactor: 1, quantity: 1, designCurrentA: 0, startingCurrentA: 0,
-  breakerRating: 16, cableSize: '2.5', remarks: '',
+  quantity: 1, demandFactor: 1, designCurrentA: 0, startingCurrentA: 0,
+  breakerType: 'MCB', breakerRating: 16, faultDutyKA: 0,
+  cableType: '', cableSize: '', earthingConductorSize: '',
+  remarks: '',
 };
+
+/** Calculate operating current from load parameters */
+function calcIb(kw: number, pf: number, phases: 1 | 3, voltage: number): number {
+  if (!kw || !pf || !voltage) return 0;
+  const denom = phases === 3 ? (pf * voltage * 1.732) : (pf * voltage);
+  return Math.round((kw * 1000 / denom) * 10) / 10;
+}
 
 function LoadSchedule() {
   const { panels, loads, addLoad, updateLoad, deleteLoad } = useLVPanelStore();
   const [panelFilter, setPanelFilter] = useState('');
+  const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<LVLoad, 'id'>>(LOAD_DEFAULTS);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [showMethodology, setShowMethodology] = useState(false);
+  const [groupByPanel, setGroupByPanel] = useState(false);
 
-  const panelIds = [...new Set(panels.map(p => p.panelId))];
-  const visible = panelFilter ? loads.filter(l => l.panelId === panelFilter) : loads;
+  const panelIds = [...new Set(panels.map(p => p.panelId).concat(loads.map(l => l.panelId))).values()].filter(Boolean).sort();
 
-  const setF = (k: keyof typeof form, v: unknown) => setForm(f => ({ ...f, [k]: v }));
+  const visible = loads.filter(l => {
+    const q = search.toLowerCase();
+    return (
+      (!panelFilter || l.panelId === panelFilter) &&
+      (!q || l.circuitRef.toLowerCase().includes(q) || l.description.toLowerCase().includes(q) || l.equipmentName.toLowerCase().includes(q) || l.area.toLowerCase().includes(q))
+    );
+  });
+
+  const setF = (k: keyof Omit<LVLoad, 'id'>, v: unknown) => {
+    setForm(f => {
+      const updated = { ...f, [k]: v };
+      // Auto-compute designCurrentA if load params change
+      if (['ratedKW','powerFactor','phases','voltage','quantity'].includes(k)) {
+        const ib = calcIb(updated.ratedKW, updated.powerFactor, updated.phases, updated.voltage);
+        return { ...updated, designCurrentA: ib };
+      }
+      return updated;
+    });
+  };
 
   const openAdd = () => {
-    setForm({ ...LOAD_DEFAULTS, panelId: panelFilter });
-    setEditId(null); setShowForm(true);
+    const base = { ...LOAD_DEFAULTS, panelId: panelFilter };
+    setForm(base); setEditId(null); setShowForm(true);
   };
   const openEdit = (l: LVLoad) => {
     const { id, ...rest } = l; setForm(rest); setEditId(id); setShowForm(true);
@@ -474,52 +504,192 @@ function LoadSchedule() {
     setShowForm(false); setEditId(null);
   };
 
-  const totalKW = visible.reduce((s, l) => s + l.ratedKW * l.quantity, 0);
-  const demandKW = visible.reduce((s, l) => s + l.ratedKW * l.demandFactor * l.quantity, 0);
+  const exportXLSX = () => {
+    const rows = visible.map(l => ({
+      'Panel ID': l.panelId, 'Circuit Ref': l.circuitRef,
+      'Description': l.description, 'Equipment Name': l.equipmentName,
+      'Area': l.area, 'Category': l.loadCategory,
+      'Ph': l.phases === 1 ? '1φ' : '3φ', 'V': l.voltage,
+      'kW': l.ratedKW, 'PF': l.powerFactor, 'Qty': l.quantity,
+      'Total Connected kW': +(l.ratedKW * l.quantity).toFixed(3),
+      'Load Factor (LF)': l.loadFactor,
+      'Demand Factor (DF)': l.demandFactor,
+      'Max Demand kW': +(l.ratedKW * l.quantity * l.demandFactor).toFixed(3),
+      'Ib (A)': l.designCurrentA || calcIb(l.ratedKW, l.powerFactor, l.phases, l.voltage),
+      'Starting I (A)': l.startingCurrentA,
+      'Breaker Type': l.breakerType, 'Breaker (A)': l.breakerRating,
+      'Fault Duty (kA)': l.faultDutyKA, 'Cable Type': l.cableType,
+      'Cable mm²': l.cableSize, 'Earth mm²': l.earthingConductorSize,
+      'Remarks': l.remarks,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Load Schedule');
+    XLSX.writeFile(wb, 'electrical_load_schedule.xlsx');
+  };
+
+  // Group visible loads by panel for subtotals
+  const panelGroups = useMemo(() => {
+    if (!groupByPanel) return null;
+    const map = new Map<string, LVLoad[]>();
+    for (const l of visible) {
+      const arr = map.get(l.panelId) ?? [];
+      arr.push(l); map.set(l.panelId, arr);
+    }
+    return map;
+  }, [visible, groupByPanel]);
+
+  const grandTotal = {
+    connected: visible.reduce((s, l) => s + l.ratedKW * l.quantity, 0),
+    demand: visible.reduce((s, l) => s + l.ratedKW * l.quantity * l.demandFactor, 0),
+  };
+
+  const LOAD_CATEGORIES = ['General','Lighting','HVAC','Power','Fire & Safety','BMS','IT/Comms','Lifts','Pumps','Emergency','Other'];
+
+  const FormField = ({ lbl, k, type = 'text', opts }: { lbl: string; k: keyof Omit<LVLoad,'id'>; type?: string; opts?: string[] }) => (
+    <div>
+      <div style={label}>{lbl}</div>
+      {opts ? (
+        <select value={form[k] as string} onChange={e => setF(k, e.target.value)} style={input()}>
+          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input type={type} value={form[k] as string | number}
+          onChange={e => setF(k, type === 'number' ? Number(e.target.value) : e.target.value)}
+          style={input()} />
+      )}
+    </div>
+  );
+
+  const renderRows = (rows: LVLoad[]) => rows.map((l, i) => {
+    const totalKW = l.ratedKW * l.quantity;
+    const maxDem = totalKW * l.demandFactor;
+    const ib = l.designCurrentA || calcIb(l.ratedKW, l.powerFactor, l.phases, l.voltage);
+    return (
+      <tr key={l.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+        <td style={td({ color: ACCENT, fontWeight: 700, whiteSpace: 'nowrap' })}>{l.panelId}</td>
+        <td style={td({ whiteSpace: 'nowrap' })}>{l.circuitRef}</td>
+        <td style={td({ minWidth: 140 })}>{l.description}</td>
+        <td style={td({ minWidth: 110 })}>{l.equipmentName}</td>
+        <td style={td()}>{l.area}</td>
+        <td style={td({ whiteSpace: 'nowrap' })}>{l.loadCategory}</td>
+        <td style={td({ textAlign: 'center' })}>{l.phases}φ</td>
+        <td style={td({ textAlign: 'right' })}>{l.ratedKW}</td>
+        <td style={td({ textAlign: 'center' })}>{l.quantity}</td>
+        <td style={td({ textAlign: 'right', fontWeight: 600 })}>{totalKW.toFixed(2)}</td>
+        <td style={td({ textAlign: 'right', color: 'var(--ec-text-muted)' })}>{l.loadFactor.toFixed(2)}</td>
+        <td style={td({ textAlign: 'right' })}>{l.demandFactor.toFixed(2)}</td>
+        <td style={td({ textAlign: 'right', fontWeight: 600, color: '#F59E0B' })}>{maxDem.toFixed(2)}</td>
+        <td style={td({ textAlign: 'right' })}>{ib.toFixed(1)}</td>
+        <td style={td({ whiteSpace: 'nowrap' })}>{l.breakerType}</td>
+        <td style={td({ textAlign: 'right' })}>{l.breakerRating}</td>
+        <td style={td({ textAlign: 'right' })}>{l.faultDutyKA || '—'}</td>
+        <td style={td({ whiteSpace: 'nowrap' })}>{l.cableType}</td>
+        <td style={td({ textAlign: 'right' })}>{l.cableSize}</td>
+        <td style={td({ textAlign: 'right' })}>{l.earthingConductorSize}</td>
+        <td style={td({ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{l.remarks}</td>
+        <td style={td()}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => openEdit(l)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
+            {confirmDel === l.id ? (
+              <>
+                <button onClick={() => { deleteLoad(l.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button>
+                <button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button>
+              </>
+            ) : (
+              <button onClick={() => setConfirmDel(l.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  });
+
+  const COLS = ['Panel','Circuit','Description','Equipment','Area','Category','Ph','kW','Qty','Total kW','LF','DF','Max Dem kW','Ib (A)','Bkr Type','Bkr (A)','FD kA','Cable Type','mm²','Earth mm²','Remarks','Actions'];
 
   return (
     <div>
-      <SectionHeader title="Electrical Load Schedule" subtitle="Circuit-level load data per panel" icon={FileText} />
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select value={panelFilter} onChange={e => setPanelFilter(e.target.value)} style={input({ width: 180 })}>
+      <SectionHeader title="Electrical Load Schedule" subtitle="Circuit-level load data with demand calculations" icon={FileText} />
+
+      {/* Calculation methodology note */}
+      <div style={{ ...card({ background: '#0EA5E911', border: '1px solid #0EA5E933' }), marginBottom: 14 }}>
+        <button onClick={() => setShowMethodology(m => !m)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: 0 }}>
+          {showMethodology ? <ChevronDown style={{ width: 14, height: 14, color: ACCENT }} /> : <ChevronRight style={{ width: 14, height: 14, color: ACCENT }} />}
+          <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT }}>Calculation Methodology &amp; Assumptions</span>
+        </button>
+        {showMethodology && (
+          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, fontSize: 11, color: 'var(--ec-text-secondary)', lineHeight: 1.6 }}>
+            <div>
+              <div style={{ fontWeight: 700, color: ACCENT, marginBottom: 4 }}>Computed Fields</div>
+              <div><b>Total Connected kW</b> = Rated kW × Quantity</div>
+              <div><b>Maximum Demand kW</b> = Total Connected kW × Demand Factor</div>
+              <div><b>Ib (A) — 3φ</b> = (kW × 1000) ÷ (√3 × V × PF)</div>
+              <div><b>Ib (A) — 1φ</b> = (kW × 1000) ÷ (V × PF)</div>
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, color: '#F59E0B', marginBottom: 4 }}>Load Factor ≠ Demand Factor</div>
+              <div><b>Load Factor (LF)</b>: Average load ÷ Peak load over a period. Operational characteristic of the equipment. <em>Not used in demand calculations.</em> Stored for reference only.</div>
+              <div style={{ marginTop: 6 }}><b>Demand Factor (DF)</b>: Maximum demand ÷ Total connected load. Applied to reduce connected load to expected peak demand. <em>Used in: Max Demand = Total Connected × DF.</em></div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Toolbar */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={panelFilter} onChange={e => setPanelFilter(e.target.value)} style={input({ width: 160 })}>
           <option value="">All Panels</option>
           {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
         </select>
+        <div style={{ position: 'relative', flex: 1, minWidth: 160 }}>
+          <Search style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', width: 13, height: 13, color: 'var(--ec-text-muted)' }} />
+          <input placeholder="Search description, circuit…" value={search} onChange={e => setSearch(e.target.value)} style={input({ paddingLeft: 28 })} />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ec-text-secondary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={groupByPanel} onChange={e => setGroupByPanel(e.target.checked)} />
+          Group by panel
+        </label>
         <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Load</button>
-        <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ec-text-muted)' }}>
-          {visible.length} circuits · {totalKW.toFixed(1)} kW connected · {demandKW.toFixed(1)} kW demand
+        <button style={btn('#22C55E')} onClick={exportXLSX}><Download style={{ width: 14, height: 14 }} /> Export</button>
+        <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', whiteSpace: 'nowrap' }}>
+          {visible.length} circuits · <b>{grandTotal.connected.toFixed(1)}</b> kW conn · <b style={{ color: '#F59E0B' }}>{grandTotal.demand.toFixed(1)}</b> kW demand
         </div>
       </div>
 
+      {/* Form */}
       {showForm && (
         <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>
-            {editId ? 'Edit Load' : 'Add Load'}
+            {editId ? 'Edit Circuit Load' : 'Add Circuit Load'}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
-            {([
-              ['Panel ID', 'panelId', 'text'],
-              ['Circuit Ref', 'circuitRef', 'text'],
-              ['Description', 'description', 'text'],
-              ['Area', 'area', 'text'],
-              ['Load Type', 'loadType', 'text'],
-              ['Rated kW', 'ratedKW', 'number'],
-              ['Power Factor', 'powerFactor', 'number'],
-              ['Phases', 'phases', 'number'],
-              ['Voltage (V)', 'voltage', 'number'],
-              ['Demand Factor', 'demandFactor', 'number'],
-              ['Quantity', 'quantity', 'number'],
-              ['Design Ib (A)', 'designCurrentA', 'number'],
-              ['Starting I (A)', 'startingCurrentA', 'number'],
-              ['Breaker (A)', 'breakerRating', 'number'],
-              ['Cable Size (mm²)', 'cableSize', 'text'],
-              ['Remarks', 'remarks', 'text'],
-            ] as [string, keyof Omit<LVLoad, 'id'>, string][]).map(([lbl, k, type]) => (
-              <div key={k}>
-                <div style={label}>{lbl}</div>
-                <input type={type} value={form[k] as string | number} onChange={e => setF(k, type === 'number' ? Number(e.target.value) : e.target.value)} style={input()} />
-              </div>
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10, marginBottom: 12 }}>
+            <FormField lbl="Panel ID *" k="panelId" />
+            <FormField lbl="Circuit Ref" k="circuitRef" />
+            <FormField lbl="Description" k="description" />
+            <FormField lbl="Equipment Name" k="equipmentName" />
+            <FormField lbl="Area" k="area" />
+            <FormField lbl="Load Category" k="loadCategory" opts={LOAD_CATEGORIES} />
+            <FormField lbl="Phases" k="phases" opts={['1','3']} />
+            <FormField lbl="Voltage (V)" k="voltage" type="number" />
+            <FormField lbl="Rated kW" k="ratedKW" type="number" />
+            <FormField lbl="Power Factor" k="powerFactor" type="number" />
+            <FormField lbl="Quantity" k="quantity" type="number" />
+            <FormField lbl="Load Factor (LF)" k="loadFactor" type="number" />
+            <FormField lbl="Demand Factor (DF)" k="demandFactor" type="number" />
+            <div>
+              <div style={label}>Ib (A) — auto-computed</div>
+              <input readOnly value={form.designCurrentA || calcIb(form.ratedKW, form.powerFactor, form.phases, form.voltage)} style={input({ opacity: 0.7 })} />
+            </div>
+            <FormField lbl="Starting I (A)" k="startingCurrentA" type="number" />
+            <FormField lbl="Breaker Type" k="breakerType" opts={['MCB','MCCB','ACB','RCBO','Fuse']} />
+            <FormField lbl="Breaker Rating (A)" k="breakerRating" type="number" />
+            <FormField lbl="Fault Duty (kA)" k="faultDutyKA" type="number" />
+            <FormField lbl="Cable Type" k="cableType" />
+            <FormField lbl="Cable Size (mm²)" k="cableSize" />
+            <FormField lbl="Earth Cond. (mm²)" k="earthingConductorSize" />
+            <div style={{ gridColumn: 'span 4' }}>
+              <div style={label}>Remarks</div>
+              <input value={form.remarks} onChange={e => setF('remarks', e.target.value)} style={input()} />
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={btn(ACCENT)} onClick={save}><CheckCircle style={{ width: 13, height: 13 }} /> Save</button>
@@ -528,49 +698,43 @@ function LoadSchedule() {
         </div>
       )}
 
+      {/* Table */}
       {visible.length === 0
-        ? <EmptyState icon={FileText} title="No loads" sub='Add loads or import from Excel.' />
+        ? <EmptyState icon={FileText} title="No loads" sub='Click "Add Load" or import from Excel.' />
         : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
-                <tr>
-                  {['Panel','Circuit','Description','Area','kW','PF','Ph','V','DF','Qty','Ib (A)','Breaker','Cable','Actions'].map(h => (
-                    <th key={h} style={TH}>{h}</th>
-                  ))}
-                </tr>
+                <tr>{COLS.map(h => <th key={h} style={TH}>{h}</th>)}</tr>
               </thead>
               <tbody>
-                {visible.map((l, i) => (
-                  <tr key={l.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                    <td style={td({ color: ACCENT, fontWeight: 700 })}>{l.panelId}</td>
-                    <td style={td()}>{l.circuitRef}</td>
-                    <td style={td()}>{l.description}</td>
-                    <td style={td()}>{l.area}</td>
-                    <td style={td()}>{l.ratedKW}</td>
-                    <td style={td()}>{l.powerFactor}</td>
-                    <td style={td()}>{l.phases}φ</td>
-                    <td style={td()}>{l.voltage}</td>
-                    <td style={td()}>{l.demandFactor}</td>
-                    <td style={td()}>{l.quantity}</td>
-                    <td style={td()}>{l.designCurrentA}</td>
-                    <td style={td()}>{l.breakerRating}</td>
-                    <td style={td()}>{l.cableSize}</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button onClick={() => openEdit(l)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
-                        {confirmDel === l.id ? (
-                          <>
-                            <button onClick={() => { deleteLoad(l.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button>
-                            <button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button>
-                          </>
-                        ) : (
-                          <button onClick={() => setConfirmDel(l.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {panelGroups
+                  ? Array.from(panelGroups.entries()).map(([pid, rows]) => {
+                    const subConn = rows.reduce((s, l) => s + l.ratedKW * l.quantity, 0);
+                    const subDem = rows.reduce((s, l) => s + l.ratedKW * l.quantity * l.demandFactor, 0);
+                    return (
+                      <React.Fragment key={pid}>
+                        {renderRows(rows)}
+                        <tr style={{ background: ACCENT + '22' }}>
+                          <td colSpan={9} style={td({ fontWeight: 700, color: ACCENT })}>{pid} — Subtotal ({rows.length} circuits)</td>
+                          <td style={td({ fontWeight: 700, textAlign: 'right' })}>{subConn.toFixed(2)}</td>
+                          <td colSpan={2} />
+                          <td style={td({ fontWeight: 700, textAlign: 'right', color: '#F59E0B' })}>{subDem.toFixed(2)}</td>
+                          <td colSpan={9} />
+                        </tr>
+                      </React.Fragment>
+                    );
+                  })
+                  : renderRows(visible)
+                }
+                {/* Grand total */}
+                <tr style={{ background: 'var(--ec-border)', fontWeight: 700 }}>
+                  <td colSpan={9} style={td({ fontWeight: 800 })}>Grand Total ({visible.length} circuits)</td>
+                  <td style={td({ fontWeight: 800, textAlign: 'right' })}>{grandTotal.connected.toFixed(2)}</td>
+                  <td colSpan={2} />
+                  <td style={td({ fontWeight: 800, textAlign: 'right', color: '#F59E0B' })}>{grandTotal.demand.toFixed(2)}</td>
+                  <td colSpan={9} />
+                </tr>
               </tbody>
             </table>
           </div>
@@ -581,43 +745,361 @@ function LoadSchedule() {
 
 // ─── SECTION: MDB Details ─────────────────────────────────────────────────────
 
+const MDB_TABS = ['A — General','B — Incoming','C — Feeders Out','D — Loads','E — Cable','F — Metering','G — Drawings','H — Inspection'] as const;
+type MdbTab = typeof MDB_TABS[number];
+
+function PanelDetail({ panel }: { panel: LVPanel }) {
+  const { feeders, loads, meters, drawings, inspections, documents } = useLVPanelStore();
+  const [tab, setTab] = useState<MdbTab>('A — General');
+
+  const outFeeders = feeders.filter(f => f.fromPanel === panel.panelId);
+  const inFeeders = feeders.filter(f => f.toPanel === panel.panelId);
+  const panelLoads = loads.filter(l => l.panelId === panel.panelId);
+  const panelMeters = meters.filter(m => m.panelId === panel.panelId);
+  const panelDrawings = drawings.filter(d => d.relatedPanels.split(/[,;]/).map(s => s.trim()).includes(panel.panelId));
+  const panelDocs = documents.filter(d => d.relatedPanels.split(/[,;]/).map(s => s.trim()).includes(panel.panelId));
+  const panelInsp = inspections.filter(i => i.panelId === panel.panelId);
+
+  const totalConn = panelLoads.reduce((s, l) => s + l.ratedKW * l.quantity, 0);
+  const totalDem = panelLoads.reduce((s, l) => s + l.ratedKW * l.quantity * l.demandFactor, 0);
+
+  const Row = ({ lbl, val }: { lbl: string; val: React.ReactNode }) => (
+    <div style={{ display: 'flex', borderBottom: '1px solid var(--ec-border)', padding: '7px 0' }}>
+      <div style={{ width: 200, flexShrink: 0, fontSize: 11, fontWeight: 600, color: 'var(--ec-text-muted)', textTransform: 'uppercase' }}>{lbl}</div>
+      <div style={{ fontSize: 12, color: 'var(--ec-text-primary)', flex: 1 }}>{val ?? '—'}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      {/* Tab bar */}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 14 }}>
+        {MDB_TABS.map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            padding: '6px 12px', borderRadius: 7, border: 'none', cursor: 'pointer',
+            fontSize: 11, fontWeight: 600,
+            background: tab === t ? ACCENT : 'var(--ec-bg-surface)',
+            color: tab === t ? '#fff' : 'var(--ec-text-secondary)',
+          }}>{t}</button>
+        ))}
+      </div>
+
+      {/* Tab A — General */}
+      {tab === 'A — General' && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{panel.panelId} — General Information</div>
+          <Row lbl="Panel ID" val={<span style={{ fontWeight: 700, color: ACCENT }}>{panel.panelId}</span>} />
+          <Row lbl="Panel Name" val={panel.panelName} />
+          <Row lbl="Panel Type" val={<StatusBadge status={panel.panelType} />} />
+          <Row lbl="Electrical Area" val={panel.electricalArea} />
+          <Row lbl="Location" val={panel.location} />
+          <Row lbl="Parent / Source Panel" val={panel.parentPanel || 'Root (no parent)'} />
+          <Row lbl="System Voltage" val={`${panel.ratedVoltage} V, ${panel.phases}φ`} />
+          <Row lbl="Installation Status" val={<StatusBadge status={panel.installationStatus} />} />
+          <Row lbl="Inspection Status" val={<StatusBadge status={panel.inspectionStatus} />} />
+          <Row lbl="Commissioning Status" val={<StatusBadge status={panel.commissioningStatus} />} />
+          <Row lbl="Energy Meter" val={panel.energyMeter ? '✓ Installed' : '✗ Not Installed'} />
+          <Row lbl="Remarks" val={panel.remarks} />
+        </div>
+      )}
+
+      {/* Tab B — Incoming Supply */}
+      {tab === 'B — Incoming' && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{panel.panelId} — Incoming Supply</div>
+          <Row lbl="Incoming Feeder Ref" val={panel.incomingFeederRef} />
+          <Row lbl="Rated Current (A)" val={`${panel.ratedCurrentA} A`} />
+          <Row lbl="Incoming Breaker Type" val={panel.incomingBreakerType} />
+          <Row lbl="Incoming Breaker Rating" val={`${panel.incomingBreakerRating} A`} />
+          <Row lbl="Fault Duty Rating" val={`${panel.faultDutyKA} kA`} />
+          <Row lbl="Incoming Cable Size" val={panel.incomingCableSize} />
+          <Row lbl="Earthing Conductor" val={panel.earthingConductorSize} />
+          {inFeeders.length > 0 && (
+            <>
+              <div style={{ marginTop: 12, marginBottom: 8, fontSize: 12, fontWeight: 700, color: 'var(--ec-text-muted)' }}>Upstream Feeder Records</div>
+              {inFeeders.map(f => (
+                <div key={f.id} style={{ background: 'var(--ec-bg-surface)', borderRadius: 8, padding: '8px 12px', marginBottom: 6, fontSize: 11 }}>
+                  <span style={{ color: ACCENT, fontWeight: 700 }}>{f.feederRef}</span>
+                  {' — From: '}<span style={{ color: 'var(--ec-text-secondary)' }}>{f.fromPanel}</span>
+                  {' · '}{f.cableSize} mm² {f.cableType}{' · '}{f.requiredLengthM} m (req)
+                  {' · '}<StatusBadge status={f.installationStatus} />
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Tab C — Outgoing Feeders */}
+      {tab === 'C — Feeders Out' && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>Outgoing Feeders from {panel.panelId}</div>
+          {outFeeders.length === 0
+            ? <EmptyState icon={Cable} title="No outgoing feeders" sub="Add feeders in Feeder & Cable Schedule." />
+            : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>{['Ref','To','Description','kW','Cable','Cores','Req L(m)','Act L(m)','Breaker','Status','Field Verify'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {outFeeders.map((f, i) => (
+                      <tr key={f.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                        <td style={td({ color: ACCENT, fontWeight: 700 })}>{f.feederRef}</td>
+                        <td style={td({ fontWeight: 600 })}>{f.toPanel}</td>
+                        <td style={td()}>{f.description}</td>
+                        <td style={td({ textAlign: 'right' })}>{f.loadKW}</td>
+                        <td style={td()}>{f.cableSize} mm²</td>
+                        <td style={td({ textAlign: 'center' })}>{f.numCores}C</td>
+                        <td style={td({ textAlign: 'right' })}>{f.requiredLengthM}</td>
+                        <td style={td({ textAlign: 'right' })}>{f.actualLengthM || '—'}</td>
+                        <td style={td()}>{f.breakerType} {f.breakerRating}A</td>
+                        <td style={td()}><StatusBadge status={f.installationStatus} /></td>
+                        <td style={td()}><StatusBadge status={f.fieldVerificationStatus} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginTop: 8 }}>
+                  {outFeeders.length} feeders · Total {outFeeders.reduce((s, f) => s + f.loadKW, 0).toFixed(1)} kW
+                </div>
+              </div>
+            )}
+        </div>
+      )}
+
+      {/* Tab D — Load Details */}
+      {tab === 'D — Loads' && (
+        <div style={card()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: ACCENT }}>Load Details — {panel.panelId}</div>
+            <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>
+              {panelLoads.length} circuits · <b>{totalConn.toFixed(1)}</b> kW connected · <b style={{ color: '#F59E0B' }}>{totalDem.toFixed(1)}</b> kW demand
+            </div>
+          </div>
+          {panelLoads.length === 0
+            ? <EmptyState icon={FileText} title="No loads" sub="Add loads in Electrical Load Schedule." />
+            : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>{['Circuit','Description','Category','kW','Qty','Total kW','DF','Max Dem','Ib (A)','Breaker','Cable','Remarks'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {panelLoads.map((l, i) => {
+                      const tot = l.ratedKW * l.quantity;
+                      const dem = tot * l.demandFactor;
+                      const ib = l.designCurrentA || calcIb(l.ratedKW, l.powerFactor, l.phases, l.voltage);
+                      return (
+                        <tr key={l.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                          <td style={td({ color: ACCENT })}>{l.circuitRef}</td>
+                          <td style={td()}>{l.description}</td>
+                          <td style={td()}>{l.loadCategory}</td>
+                          <td style={td({ textAlign: 'right' })}>{l.ratedKW}</td>
+                          <td style={td({ textAlign: 'center' })}>{l.quantity}</td>
+                          <td style={td({ textAlign: 'right', fontWeight: 600 })}>{tot.toFixed(2)}</td>
+                          <td style={td({ textAlign: 'right' })}>{l.demandFactor}</td>
+                          <td style={td({ textAlign: 'right', color: '#F59E0B' })}>{dem.toFixed(2)}</td>
+                          <td style={td({ textAlign: 'right' })}>{ib.toFixed(1)}</td>
+                          <td style={td()}>{l.breakerType} {l.breakerRating}A</td>
+                          <td style={td()}>{l.cableSize}</td>
+                          <td style={td()}>{l.remarks}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{ background: ACCENT + '22', fontWeight: 700 }}>
+                      <td colSpan={5} style={td({ fontWeight: 800 })}>Panel Total</td>
+                      <td style={td({ fontWeight: 800, textAlign: 'right' })}>{totalConn.toFixed(2)}</td>
+                      <td />
+                      <td style={td({ fontWeight: 800, textAlign: 'right', color: '#F59E0B' })}>{totalDem.toFixed(2)}</td>
+                      <td colSpan={4} />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      )}
+
+      {/* Tab E — Cable Details */}
+      {tab === 'E — Cable' && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>Cable Details — {panel.panelId}</div>
+          <div style={{ marginBottom: 10, fontSize: 12, fontWeight: 700, color: 'var(--ec-text-muted)' }}>Incoming</div>
+          {inFeeders.length === 0
+            ? <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 12 }}>No incoming feeder records.</div>
+            : inFeeders.map((f, i) => (
+              <div key={f.id} style={{ ...card({ padding: '10px 14px', marginBottom: 8 }) }}>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
+                  <span><b style={{ color: ACCENT }}>{f.feederRef}</b></span>
+                  <span>From: <b>{f.fromPanel}</b></span>
+                  <span>Size: <b>{f.cableSize} mm²</b></span>
+                  <span>Type: <b>{f.cableType}</b></span>
+                  <span>Cores: <b>{f.numCores}C</b></span>
+                  <span>Req: <b>{f.requiredLengthM} m</b></span>
+                  <span>Act: <b>{f.actualLengthM || '—'} m</b></span>
+                  <span>Earth: <b>{f.earthingCableSize || '—'}</b></span>
+                  <span>Runs: <b>×{f.numRuns}</b></span>
+                </div>
+              </div>
+            ))}
+          <div style={{ marginBottom: 10, marginTop: 8, fontSize: 12, fontWeight: 700, color: 'var(--ec-text-muted)' }}>Outgoing</div>
+          {outFeeders.length === 0
+            ? <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>No outgoing feeder records.</div>
+            : outFeeders.map(f => (
+              <div key={f.id} style={{ ...card({ padding: '10px 14px', marginBottom: 8 }) }}>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
+                  <span><b style={{ color: ACCENT }}>{f.feederRef}</b></span>
+                  <span>To: <b>{f.toPanel}</b></span>
+                  <span>Size: <b>{f.cableSize} mm²</b></span>
+                  <span>Type: <b>{f.cableType}</b></span>
+                  <span>Cores: <b>{f.numCores}C</b></span>
+                  <span>Req: <b>{f.requiredLengthM} m</b></span>
+                  <span>Act: <b>{f.actualLengthM || '—'} m</b></span>
+                  {f.requiredLengthM > 0 && f.actualLengthM > 0 && (
+                    <span style={{ color: f.requiredLengthM - f.actualLengthM >= 0 ? '#22C55E' : '#EF4444' }}>
+                      Δ {(f.requiredLengthM - f.actualLengthM).toFixed(1)} m
+                    </span>
+                  )}
+                  <span>Earth: <b>{f.earthingCableSize || '—'}</b></span>
+                  <span>Runs: <b>×{f.numRuns}</b></span>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {/* Tab F — Metering */}
+      {tab === 'F — Metering' && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>Metering — {panel.panelId}</div>
+          <Row lbl="Energy Meter Flag" val={panel.energyMeter ? <span style={{ color: '#22C55E', fontWeight: 700 }}>✓ Yes</span> : '✗ No'} />
+          {panelMeters.length === 0
+            ? <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ec-text-muted)' }}>No meter records. Add meters in Metering & CT Details.</div>
+            : panelMeters.map(m => (
+              <div key={m.id} style={{ ...card({ padding: '10px 14px', marginTop: 10 }) }}>
+                <Row lbl="Meter Ref" val={<span style={{ color: ACCENT, fontWeight: 700 }}>{m.meterRef}</span>} />
+                <Row lbl="Type" val={m.meterType} />
+                <Row lbl="CT Ratio" val={m.ctRatio} />
+                <Row lbl="Accuracy" val={m.accuracy} />
+                <Row lbl="Serial No." val={m.serialNumber} />
+                <Row lbl="Status" val={<StatusBadge status={m.installationStatus} />} />
+                <Row lbl="Remarks" val={m.remarks} />
+              </div>
+            ))}
+        </div>
+      )}
+
+      {/* Tab G — Drawings & Documents */}
+      {tab === 'G — Drawings' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={card()}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>Drawings — {panel.panelId}</div>
+            {panelDrawings.length === 0
+              ? <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>No drawings. Enter the panel ID in the "Related Panels" field of drawings.</div>
+              : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>{['Drawing No','Title','Rev','Date','Status','Remarks'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {panelDrawings.map((d, i) => (
+                      <tr key={d.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                        <td style={td({ color: ACCENT })}>{d.drawingNo}</td>
+                        <td style={td()}>{d.title}</td>
+                        <td style={td()}>{d.revision}</td>
+                        <td style={td()}>{d.date}</td>
+                        <td style={td()}><StatusBadge status={d.status} /></td>
+                        <td style={td()}>{d.remarks}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+          </div>
+          <div style={card()}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>Documents — {panel.panelId}</div>
+            {panelDocs.length === 0
+              ? <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>No documents linked to this panel.</div>
+              : panelDocs.map((d, i) => (
+                <div key={d.id} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--ec-border)', fontSize: 12 }}>
+                  <span style={{ color: ACCENT, fontWeight: 700 }}>{d.docRef}</span>
+                  <span style={{ flex: 1 }}>{d.title}</span>
+                  <span style={{ color: 'var(--ec-text-muted)' }}>{d.revision} · {d.date}</span>
+                  <StatusBadge status={d.status} />
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab H — Inspection */}
+      {tab === 'H — Inspection' && (
+        <div style={card()}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>Inspection & Maintenance — {panel.panelId}</div>
+          {panelInsp.length === 0
+            ? <EmptyState icon={ClipboardList} title="No inspections" sub="Add inspections in Inspection & Site Verification." />
+            : panelInsp.map((x, i) => (
+              <div key={x.id} style={{ ...card({ padding: '12px 16px', marginBottom: 10, borderLeft: `3px solid ${x.status === 'Passed' ? '#22C55E' : x.status === 'Failed' ? '#EF4444' : '#F59E0B'}` }) }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{x.type} — {x.inspectionDate}</div>
+                  <StatusBadge status={x.status} />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--ec-text-secondary)', marginBottom: 4 }}>Inspector: <b>{x.inspector}</b></div>
+                {x.findings && <div style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Findings: {x.findings}</div>}
+                {x.actionRequired && <div style={{ fontSize: 11, color: '#EF4444', marginTop: 4 }}>Action: {x.actionRequired}</div>}
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MDBDetails() {
   const { panels } = useLVPanelStore();
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filterType, setFilterType] = useState('');
+
+  const filtered = panels.filter(p =>
+    (!search || p.panelId.toLowerCase().includes(search.toLowerCase()) || p.panelName.toLowerCase().includes(search.toLowerCase())) &&
+    (!filterType || p.panelType === filterType)
+  );
+
+  const selected = panels.find(p => p.id === selectedId) ?? (filtered.length > 0 ? filtered[0] : null);
+
   return (
     <div>
-      <SectionHeader title="MDB / SMDB / MCC Details" subtitle="Technical parameters for all distribution boards" icon={Zap} />
+      <SectionHeader title="MDB / SMDB / MCC Management" subtitle="Detailed panel pages with incoming, feeders, loads, metering and inspections" icon={Zap} />
       {panels.length === 0
-        ? <EmptyState icon={Zap} title="No panels" sub="Register panels in Panel Register first." />
+        ? <EmptyState icon={Zap} title="No panels registered" sub="Add panels in Panel Register first." />
         : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Panel ID','Type','Voltage','Phases','Rating (A)','Breaker','Breaker (A)','Fault kA','Cable In','Earth Size','kW','Demand kW','Status'].map(h => (
-                    <th key={h} style={TH}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {panels.map((p, i) => (
-                  <tr key={p.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                    <td style={td({ color: ACCENT, fontWeight: 700 })}>{p.panelId}</td>
-                    <td style={td()}><StatusBadge status={p.panelType} /></td>
-                    <td style={td()}>{p.ratedVoltage} V</td>
-                    <td style={td()}>{p.phases}φ</td>
-                    <td style={td()}>{p.ratedCurrentA} A</td>
-                    <td style={td()}>{p.incomingBreakerType}</td>
-                    <td style={td()}>{p.incomingBreakerRating} A</td>
-                    <td style={td()}>{p.faultDutyKA} kA</td>
-                    <td style={td()}>{p.incomingCableSize}</td>
-                    <td style={td()}>{p.earthingConductorSize}</td>
-                    <td style={td()}>{p.connectedLoadKW}</td>
-                    <td style={td()}>{p.maxDemandKW}</td>
-                    <td style={td()}><StatusBadge status={p.installationStatus} /></td>
-                  </tr>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+            {/* Left panel list */}
+            <div style={{ width: 220, flexShrink: 0 }}>
+              <div style={{ marginBottom: 8 }}>
+                <input placeholder="Search panel…" value={search} onChange={e => setSearch(e.target.value)} style={input({ fontSize: 11 })} />
+              </div>
+              <select value={filterType} onChange={e => setFilterType(e.target.value)} style={input({ fontSize: 11, marginBottom: 8 })}>
+                <option value="">All Types</option>
+                {['MDB','SMDB','MCC','DB','EDB','ESMDB','SDB','MLDB','Other'].map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <div style={{ maxHeight: 'calc(100vh - 320px)', overflowY: 'auto' }}>
+                {filtered.map(p => (
+                  <button key={p.id} onClick={() => setSelectedId(p.id)} style={{
+                    display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px',
+                    borderRadius: 8, border: 'none', cursor: 'pointer', marginBottom: 4,
+                    background: (selected?.id === p.id) ? ACCENT + '33' : 'var(--ec-bg-surface)',
+                    borderLeft: `3px solid ${selected?.id === p.id ? ACCENT : 'transparent'}`,
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: selected?.id === p.id ? ACCENT : 'var(--ec-text-primary)' }}>{p.panelId}</div>
+                    <div style={{ fontSize: 10, color: 'var(--ec-text-muted)', marginTop: 2 }}>{p.panelType} · {p.electricalArea || p.location}</div>
+                    <div style={{ marginTop: 4 }}><StatusBadge status={p.installationStatus} /></div>
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
+
+            {/* Right detail */}
+            {selected
+              ? <PanelDetail key={selected.id} panel={selected} />
+              : <div style={{ flex: 1, ...card(), textAlign: 'center', padding: 40, color: 'var(--ec-text-muted)' }}>Select a panel from the list.</div>
+            }
           </div>
         )}
     </div>
@@ -627,22 +1109,54 @@ function MDBDetails() {
 // ─── SECTION: Feeder & Cable Schedule ────────────────────────────────────────
 
 const FEEDER_DEFAULTS: Omit<LVFeeder, 'id' | 'createdAt'> = {
-  feederRef: '', fromPanel: '', toPanel: '', description: '', area: '',
-  loadKW: 0, loadPF: 0.85, phases: 3, voltage: 400, designCurrentA: 0,
-  cableSize: '16', cableType: 'XLPE/SWA/PVC', cableLength: 0, numRuns: 1,
-  breakerRating: 63, breakerType: 'MCCB', demandFactor: 1,
-  installationStatus: 'Pending', remarks: '',
+  serialNo: '', feederRef: '', fromPanel: '', toPanel: '',
+  description: '', area: '', loadKW: 0, loadPF: 0.85,
+  phases: 3, voltage: 400, designCurrentA: 0,
+  cableSize: '', cableType: 'XLPE/SWA/PVC', numCores: 4,
+  requiredLengthM: 0, actualLengthM: 0, numRuns: 1,
+  breakerRating: 0, breakerType: 'MCCB', demandFactor: 1,
+  earthingCableSize: '', installationStatus: 'Not Started',
+  fieldVerificationStatus: 'Pending', inspectionRemarks: '', remarks: '',
+};
+
+const FEEDER_STATUS_COLOR: Record<string, string> = {
+  'Not Started': '#64748B', 'Cable Required': '#F59E0B', 'Cable Laid': '#3B82F6',
+  'Termination Pending': '#8B5CF6', 'Terminated': '#0EA5E9',
+  'Field Verification Pending': '#F97316', 'Verified': '#22C55E',
+  'Cable Not Connected': '#EF4444', 'Completed': '#22C55E', 'On Hold': '#EF4444',
 };
 
 function FeederCable() {
-  const { feeders, addFeeder, updateFeeder, deleteFeeder } = useLVPanelStore();
+  const { feeders, panels, addFeeder, updateFeeder, deleteFeeder } = useLVPanelStore();
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<LVFeeder, 'id' | 'createdAt'>>(FEEDER_DEFAULTS);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
 
-  const setF = (k: keyof typeof form, v: unknown) => setForm(f => ({ ...f, [k]: v }));
-  const openAdd = () => { setForm(FEEDER_DEFAULTS); setEditId(null); setShowForm(true); };
+  // 5 filters
+  const [fFrom, setFFrom] = useState('');
+  const [fTo, setFTo] = useState('') ;
+  const [fSize, setFSize] = useState('');
+  const [fInstall, setFInstall] = useState('');
+  const [fVerify, setFVerify] = useState('');
+
+  const panelIds = [...new Set(panels.map(p => p.panelId))].sort();
+  const cableSizes = [...new Set(feeders.map(f => f.cableSize).filter(Boolean))].sort();
+
+  const visible = feeders.filter(f =>
+    (!fFrom || f.fromPanel === fFrom) &&
+    (!fTo || f.toPanel === fTo) &&
+    (!fSize || f.cableSize === fSize) &&
+    (!fInstall || f.installationStatus === fInstall) &&
+    (!fVerify || f.fieldVerificationStatus === fVerify)
+  );
+
+  const setF = (k: keyof Omit<LVFeeder, 'id' | 'createdAt'>, v: unknown) => setForm(f => ({ ...f, [k]: v }));
+
+  const openAdd = () => {
+    const sn = String(feeders.length + 1).padStart(3, '0');
+    setForm({ ...FEEDER_DEFAULTS, serialNo: sn }); setEditId(null); setShowForm(true);
+  };
   const openEdit = (f: LVFeeder) => {
     const { id, createdAt, ...rest } = f; setForm(rest); setEditId(id); setShowForm(true);
   };
@@ -651,61 +1165,132 @@ function FeederCable() {
     setShowForm(false);
   };
 
-  const totalLen = feeders.reduce((s, f) => s + f.cableLength * f.numRuns, 0);
-  const totalKW = feeders.reduce((s, f) => s + f.loadKW, 0);
+  const exportXLSX = () => {
+    const rows = visible.map(f => ({
+      'S/N': f.serialNo, 'Feeder Ref': f.feederRef,
+      'From Panel': f.fromPanel, 'To Panel / Equipment': f.toPanel,
+      'Description': f.description, 'Area': f.area, 'kW': f.loadKW,
+      'Cable Type': f.cableType, 'Runs': f.numRuns, 'Size (mm²)': f.cableSize,
+      'Cores': f.numCores, 'Required Length (m)': f.requiredLengthM,
+      'Actual Length (m)': f.actualLengthM,
+      'Length Diff (m)': f.requiredLengthM > 0 && f.actualLengthM > 0 ? +(f.requiredLengthM - f.actualLengthM).toFixed(2) : '',
+      'Earth Cable Size': f.earthingCableSize, 'Breaker Type': f.breakerType,
+      'Breaker Rating (A)': f.breakerRating, 'Install Status': f.installationStatus,
+      'Field Verify': f.fieldVerificationStatus, 'Inspection Remarks': f.inspectionRemarks,
+      'Remarks': f.remarks,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Feeder Schedule');
+    XLSX.writeFile(wb, 'feeder_cable_schedule.xlsx');
+  };
+
+  const totalReq = visible.reduce((s, f) => s + f.requiredLengthM * f.numRuns, 0);
+  const totalAct = visible.reduce((s, f) => s + f.actualLengthM * f.numRuns, 0);
+  const totalKW = visible.reduce((s, f) => s + f.loadKW, 0);
+
+  const FormField = ({ lbl, k, type = 'text', opts }: { lbl: string; k: keyof Omit<LVFeeder,'id'|'createdAt'>; type?: string; opts?: string[] }) => (
+    <div>
+      <div style={label}>{lbl}</div>
+      {opts ? (
+        <select value={form[k] as string} onChange={e => setF(k, e.target.value)} style={input()}>
+          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input type={type} value={form[k] as string | number} onChange={e => setF(k, type === 'number' ? Number(e.target.value) : e.target.value)} style={input()} />
+      )}
+    </div>
+  );
 
   return (
     <div>
-      <SectionHeader title="Feeder & Cable Schedule" subtitle="Cable sizing, routing and status" icon={Cable} />
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
-        <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Feeder</button>
-        <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ec-text-muted)' }}>
-          {feeders.length} feeders · {totalKW.toFixed(1)} kW · {totalLen.toFixed(0)} m total cable
+      <SectionHeader title="Feeder & Cable Schedule" subtitle="Cable routing, lengths, status and site verification" icon={Cable} />
+
+      {/* 5 filters */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={fFrom} onChange={e => setFFrom(e.target.value)} style={input({ width: 150 })}>
+          <option value="">All Source Panels</option>
+          {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+        </select>
+        <select value={fTo} onChange={e => setFTo(e.target.value)} style={input({ width: 150 })}>
+          <option value="">All Destinations</option>
+          {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+        </select>
+        <select value={fSize} onChange={e => setFSize(e.target.value)} style={input({ width: 130 })}>
+          <option value="">All Cable Sizes</option>
+          {cableSizes.map(s => <option key={s} value={s}>{s} mm²</option>)}
+        </select>
+        <select value={fInstall} onChange={e => setFInstall(e.target.value)} style={input({ width: 200 })}>
+          <option value="">All Install Statuses</option>
+          {FEEDER_INSTALL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={fVerify} onChange={e => setFVerify(e.target.value)} style={input({ width: 160 })}>
+          <option value="">All Field Verify</option>
+          {['Pending','In Progress','Verified','Not Required','Failed'].map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {(fFrom || fTo || fSize || fInstall || fVerify) && (
+          <button style={btn('#475569', { fontSize: 11 })} onClick={() => { setFFrom(''); setFTo(''); setFSize(''); setFInstall(''); setFVerify(''); }}>
+            Clear Filters
+          </button>
+        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+          <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Feeder</button>
+          <button style={btn('#22C55E')} onClick={exportXLSX}><Download style={{ width: 14, height: 14 }} /> Export</button>
         </div>
       </div>
 
+      {/* Summary */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 14 }}>
+        <KpiCard value={visible.length} label="Feeders Shown" sub={`of ${feeders.length} total`} color={ACCENT} icon={Cable} />
+        <KpiCard value={totalKW.toFixed(1) + ' kW'} label="Total Load" color="#8B5CF6" icon={Zap} />
+        <KpiCard value={totalReq.toFixed(0) + ' m'} label="Required Cable" sub="sum × runs" color="#F59E0B" icon={Activity} />
+        <KpiCard value={totalAct.toFixed(0) + ' m'} label="Installed Cable" sub="sum × runs" color="#22C55E" icon={CheckCircle} />
+      </div>
+
+      {/* Form */}
       {showForm && (
         <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>
             {editId ? 'Edit Feeder' : 'Add Feeder'}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
-            {([
-              ['Feeder Ref', 'feederRef', 'text'],
-              ['From Panel', 'fromPanel', 'text'],
-              ['To Panel', 'toPanel', 'text'],
-              ['Description', 'description', 'text'],
-              ['Area', 'area', 'text'],
-              ['Load kW', 'loadKW', 'number'],
-              ['Power Factor', 'loadPF', 'number'],
-              ['Phases', 'phases', 'number'],
-              ['Voltage (V)', 'voltage', 'number'],
-              ['Design Ib (A)', 'designCurrentA', 'number'],
-              ['Cable Size (mm²)', 'cableSize', 'text'],
-              ['Cable Type', 'cableType', 'text'],
-              ['Cable Length (m)', 'cableLength', 'number'],
-              ['No. of Runs', 'numRuns', 'number'],
-              ['Breaker (A)', 'breakerRating', 'number'],
-              ['Breaker Type', 'breakerType', 'text'],
-              ['Demand Factor', 'demandFactor', 'number'],
-              ['Remarks', 'remarks', 'text'],
-            ] as [string, keyof Omit<LVFeeder, 'id' | 'createdAt'>, string][]).map(([lbl, k, type]) => (
-              <div key={k}>
-                <div style={label}>{lbl}</div>
-                {k === 'installationStatus' ? (
-                  <select value={form[k] as string} onChange={e => setF(k, e.target.value)} style={input()}>
-                    {['Pending','Installed','Verified'].map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                ) : (
-                  <input type={type} value={form[k] as string | number} onChange={e => setF(k, type === 'number' ? Number(e.target.value) : e.target.value)} style={input()} />
-                )}
-              </div>
-            ))}
+          <div style={{ ...card({ background: '#F59E0B11', border: '1px solid #F59E0B33' }), marginBottom: 12, fontSize: 11, color: 'var(--ec-text-secondary)' }}>
+            <b>Note:</b> "Required Length" is from design drawings. "Actual Length" is measured on site after installation.
+            Length Difference = Required − Actual. Do not mark status as Completed based on cable length alone — use status field explicitly.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10, marginBottom: 12 }}>
+            <FormField lbl="Serial No." k="serialNo" />
+            <FormField lbl="Feeder Ref *" k="feederRef" />
+            <FormField lbl="From Panel" k="fromPanel" />
+            <FormField lbl="To Panel / Equipment" k="toPanel" />
+            <FormField lbl="Description" k="description" />
+            <FormField lbl="Area" k="area" />
+            <FormField lbl="Load kW" k="loadKW" type="number" />
+            <FormField lbl="Power Factor" k="loadPF" type="number" />
+            <FormField lbl="Phases" k="phases" opts={['1','3']} />
+            <FormField lbl="Voltage (V)" k="voltage" type="number" />
+            <FormField lbl="Design Ib (A)" k="designCurrentA" type="number" />
+            <FormField lbl="Cable Size (mm²)" k="cableSize" />
+            <FormField lbl="Cable Type" k="cableType" />
+            <FormField lbl="No. of Cores" k="numCores" type="number" />
+            <FormField lbl="No. of Runs" k="numRuns" type="number" />
+            <FormField lbl="Required Length (m)" k="requiredLengthM" type="number" />
+            <FormField lbl="Actual Installed (m)" k="actualLengthM" type="number" />
             <div>
-              <div style={label}>Status</div>
-              <select value={form.installationStatus} onChange={e => setF('installationStatus', e.target.value)} style={input()}>
-                {['Pending','Installed','Verified'].map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
+              <div style={label}>Length Diff (m)</div>
+              <input readOnly value={form.requiredLengthM > 0 && form.actualLengthM > 0 ? (form.requiredLengthM - form.actualLengthM).toFixed(2) : '—'} style={input({ opacity: 0.7 })} />
+            </div>
+            <FormField lbl="Earth Cable Size" k="earthingCableSize" />
+            <FormField lbl="Breaker Type" k="breakerType" opts={['MCCB','MCB','ACB','Fuse']} />
+            <FormField lbl="Breaker Rating (A)" k="breakerRating" type="number" />
+            <FormField lbl="Demand Factor" k="demandFactor" type="number" />
+            <FormField lbl="Install Status" k="installationStatus" opts={FEEDER_INSTALL_STATUSES} />
+            <FormField lbl="Field Verify Status" k="fieldVerificationStatus" opts={['Pending','In Progress','Verified','Not Required','Failed']} />
+            <div style={{ gridColumn: 'span 2' }}>
+              <div style={label}>Inspection Remarks (site)</div>
+              <input value={form.inspectionRemarks} onChange={e => setF('inspectionRemarks', e.target.value)} style={input()} />
+            </div>
+            <div style={{ gridColumn: 'span 3' }}>
+              <div style={label}>Remarks</div>
+              <input value={form.remarks} onChange={e => setF('remarks', e.target.value)} style={input()} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -715,53 +1300,72 @@ function FeederCable() {
         </div>
       )}
 
-      {feeders.length === 0
-        ? <EmptyState icon={Cable} title="No feeders" sub='Add feeder circuits or import from Excel.' />
+      {/* Table */}
+      {visible.length === 0
+        ? <EmptyState icon={Cable} title="No feeders match filters" sub={feeders.length === 0 ? 'Click "Add Feeder" or import from Excel.' : 'Clear filters to see all feeders.'} />
         : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
                 <tr>
-                  {['Ref','From','To','Description','Area','kW','PF','V','Ib(A)','Size','Type','Length(m)','Runs','Breaker','Status','Actions'].map(h => (
+                  {['S/N','Ref','From','To','Description','Area','kW','Type','Runs','Size mm²','Cores','Req L(m)','Act L(m)','Δ L(m)','Earth','Breaker','Install Status','Field Verify','Insp. Remarks','Actions'].map(h => (
                     <th key={h} style={TH}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {feeders.map((f, i) => (
-                  <tr key={f.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                    <td style={td({ color: ACCENT, fontWeight: 700 })}>{f.feederRef}</td>
-                    <td style={td()}>{f.fromPanel}</td>
-                    <td style={td()}>{f.toPanel}</td>
-                    <td style={td()}>{f.description}</td>
-                    <td style={td()}>{f.area}</td>
-                    <td style={td()}>{f.loadKW}</td>
-                    <td style={td()}>{f.loadPF}</td>
-                    <td style={td()}>{f.voltage}</td>
-                    <td style={td()}>{f.designCurrentA}</td>
-                    <td style={td()}>{f.cableSize}</td>
-                    <td style={td()}>{f.cableType}</td>
-                    <td style={td()}>{f.cableLength}</td>
-                    <td style={td()}>{f.numRuns}</td>
-                    <td style={td()}>{f.breakerRating} A</td>
-                    <td style={td()}><StatusBadge status={f.installationStatus} /></td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button onClick={() => openEdit(f)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
-                        {confirmDel === f.id ? (
-                          <>
-                            <button onClick={() => { deleteFeeder(f.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button>
-                            <button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button>
-                          </>
-                        ) : (
-                          <button onClick={() => setConfirmDel(f.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {visible.map((f, i) => {
+                  const lenDiff = f.requiredLengthM > 0 && f.actualLengthM > 0 ? f.requiredLengthM - f.actualLengthM : null;
+                  const statusColor = FEEDER_STATUS_COLOR[f.installationStatus] ?? '#64748B';
+                  return (
+                    <tr key={f.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                      <td style={td({ color: 'var(--ec-text-muted)' })}>{f.serialNo}</td>
+                      <td style={td({ color: ACCENT, fontWeight: 700, whiteSpace: 'nowrap' })}>{f.feederRef}</td>
+                      <td style={td({ fontWeight: 600, whiteSpace: 'nowrap' })}>{f.fromPanel}</td>
+                      <td style={td({ fontWeight: 600, whiteSpace: 'nowrap' })}>{f.toPanel}</td>
+                      <td style={td({ minWidth: 130 })}>{f.description}</td>
+                      <td style={td()}>{f.area}</td>
+                      <td style={td({ textAlign: 'right' })}>{f.loadKW}</td>
+                      <td style={td({ whiteSpace: 'nowrap' })}>{f.cableType}</td>
+                      <td style={td({ textAlign: 'center' })}>×{f.numRuns}</td>
+                      <td style={td({ textAlign: 'right', fontWeight: 600 })}>{f.cableSize}</td>
+                      <td style={td({ textAlign: 'center' })}>{f.numCores}C</td>
+                      <td style={td({ textAlign: 'right' })}>{f.requiredLengthM || '—'}</td>
+                      <td style={td({ textAlign: 'right' })}>{f.actualLengthM || '—'}</td>
+                      <td style={td({ textAlign: 'right', fontWeight: 600, color: lenDiff === null ? 'inherit' : lenDiff >= 0 ? '#22C55E' : '#EF4444' })}>
+                        {lenDiff === null ? '—' : `${lenDiff >= 0 ? '+' : ''}${lenDiff.toFixed(1)}`}
+                      </td>
+                      <td style={td()}>{f.earthingCableSize}</td>
+                      <td style={td({ whiteSpace: 'nowrap' })}>{f.breakerType} {f.breakerRating}A</td>
+                      <td style={td()}>
+                        <span style={{ background: statusColor + '22', color: statusColor, border: `1px solid ${statusColor}55`, borderRadius: 6, padding: '2px 7px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          {f.installationStatus}
+                        </span>
+                      </td>
+                      <td style={td()}><StatusBadge status={f.fieldVerificationStatus} /></td>
+                      <td style={td({ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{f.inspectionRemarks}</td>
+                      <td style={td()}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={() => openEdit(f)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
+                          {confirmDel === f.id ? (
+                            <>
+                              <button onClick={() => { deleteFeeder(f.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button>
+                              <button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button>
+                            </>
+                          ) : (
+                            <button onClick={() => setConfirmDel(f.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+            <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginTop: 8, paddingLeft: 4 }}>
+              {visible.length} records · Required: {totalReq.toFixed(0)} m · Installed: {totalAct.toFixed(0)} m
+              {totalReq > 0 && totalAct > 0 && <span style={{ color: totalReq >= totalAct ? '#22C55E' : '#EF4444' }}> · Δ {(totalReq - totalAct).toFixed(0)} m</span>}
+            </div>
           </div>
         )}
     </div>
