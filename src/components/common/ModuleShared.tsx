@@ -4,17 +4,19 @@ import type { CalculationResult } from '../../types';
 
 // ── CSS-variable tokens — respond to [data-theme="light/dark"] ────────────────
 const C = {
-  bg:    'var(--ec-bg-card)',
-  bgDark:'var(--ec-bg-root)',
-  border:'var(--ec-border-card)',
-  text:  'var(--ec-text-primary)',
-  muted: 'var(--ec-text-muted)',
-  dim:   'var(--ec-border)',
-  label: 'var(--ec-text-label)',
-  surf:  'var(--ec-bg-surface)',
-  sec:   'var(--ec-text-secondary)',
-  input: 'var(--ec-bg-input)',
-  mono:  "JetBrains Mono, 'Courier New', monospace",
+  bg:          'var(--ec-bg-card)',
+  bgDark:      'var(--ec-bg-root)',
+  border:      'var(--ec-border-card)',
+  borderLine:  'var(--ec-border)',           // use only for actual borders, not text
+  text:        'var(--ec-text-primary)',
+  muted:       'var(--ec-text-muted)',
+  dim:         'var(--ec-border)',            // legacy alias — prefer C.label for text
+  label:       'var(--ec-text-label)',        // secondary label text — readable in both themes
+  surf:        'var(--ec-bg-surface)',
+  sec:         'var(--ec-text-secondary)',
+  input:       'var(--ec-bg-input)',
+  formulaCode: 'var(--ec-formula-code)',      // theme-aware formula/code text color
+  mono:        "JetBrains Mono, 'Courier New', monospace",
 };
 
 // ── ModHeader ─────────────────────────────────────────────────────────────────
@@ -50,7 +52,7 @@ export function ModHeader({
 export function InputPanel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:16, padding:24, boxShadow:'var(--ec-shadow-card)' }}>
-      <div style={{ fontSize:12, fontWeight:700, color:C.muted, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:20 }}>Design Inputs</div>
+      <div style={{ fontSize:12, fontWeight:700, color:C.label, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:20 }}>Design Inputs</div>
       {children}
     </div>
   );
@@ -101,7 +103,7 @@ export function ResultPanel({
       {/* Header row */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:C.muted, textTransform:'uppercase', letterSpacing:'0.08em' }}>Results</div>
+          <div style={{ fontSize:12, fontWeight:700, color:C.label, textTransform:'uppercase', letterSpacing:'0.08em' }}>Results</div>
           <span style={{ fontSize:11, padding:'2px 10px', borderRadius:20, background:`${statusColor}18`, color:statusColor, fontWeight:700, border:`1px solid ${statusColor}30` }}>
             {status}
           </span>
@@ -140,9 +142,9 @@ export function ResultPanel({
 
       {/* Formula */}
       {result.formula && (
-        <div style={{ background:C.bgDark, borderRadius:12, padding:'12px 16px', border:`1px solid ${C.border}` }}>
-          <div style={{ fontSize:11, color:C.dim, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:5 }}>Key Formula</div>
-          <code style={{ fontSize:13, color:'#93C5FD', fontFamily:C.mono }}>{result.formula}</code>
+        <div style={{ background:C.bgDark, borderRadius:12, padding:'12px 16px', border:`1px solid ${C.borderLine}` }}>
+          <div style={{ fontSize:11, color:C.label, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:5 }}>Key Formula</div>
+          <code style={{ fontSize:13, fontWeight:600, color:C.formulaCode, fontFamily:C.mono }}>{result.formula}</code>
         </div>
       )}
 
@@ -156,10 +158,10 @@ export function ResultPanel({
 
       {/* Standard reference */}
       {result.standardRef && (
-        <div style={{ display:'flex', gap:10, padding:'10px 14px', background:C.surf, borderRadius:10, border:`1px solid ${C.border}` }}>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:10, padding:'10px 14px', background:C.surf, borderRadius:10, border:`1px solid ${C.borderLine}` }}>
           <span style={{ fontSize:12, fontWeight:700, color:accentColor }}>{result.standardRef.standard}</span>
-          {result.standardRef.clause && <span style={{ fontSize:12, color:C.dim }}>Clause {result.standardRef.clause}</span>}
-          {result.standardRef.title && <span style={{ fontSize:12, color:C.dim }}>— {result.standardRef.title}</span>}
+          {result.standardRef.clause && <span style={{ fontSize:12, fontWeight:600, color:C.label }}>Clause {result.standardRef.clause}</span>}
+          {result.standardRef.title && <span style={{ fontSize:12, fontWeight:500, color:C.muted }}>— {result.standardRef.title}</span>}
         </div>
       )}
 
@@ -203,7 +205,7 @@ export function KpiCard({
       border:`1px solid ${highlight ? `${accentColor}30` : C.border}`,
       borderRadius:14, padding:'16px 18px',
     }}>
-      <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:8 }}>{label}</div>
+      <div style={{ fontSize:11, fontWeight:700, color:C.label, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:8 }}>{label}</div>
       <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
         <span style={{ fontSize:22, fontWeight:800, color:valueColor, letterSpacing:'-0.02em', lineHeight:1, fontFamily:sc || highlight ? C.mono : 'inherit' }}>{value}</span>
         {unit && <span style={{ fontSize:12, fontWeight:600, color:C.muted }}>{unit}</span>}
@@ -232,13 +234,13 @@ export function StepByStep({ steps }: { steps: Array<{ step: number; description
             <span style={{ fontSize:12, fontWeight:800, color:'#fff' }}>{s.step}</span>
           </div>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:14, fontWeight:700, color:C.sec, marginBottom:10 }}>{s.description}</div>
-            <div style={{ background:C.bgDark, borderRadius:10, padding:'10px 14px', border:`1px solid ${C.border}`, marginBottom:8 }}>
-              <div style={{ fontSize:11, color:C.dim, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:5 }}>Formula / Working</div>
-              <code style={{ fontSize:13, color:'#93C5FD', fontFamily:C.mono }}>{s.formula}</code>
+            <div style={{ fontSize:14, fontWeight:700, color:C.text, marginBottom:10 }}>{s.description}</div>
+            <div style={{ background:C.bgDark, borderRadius:10, padding:'10px 14px', border:`1px solid ${C.borderLine}`, marginBottom:8 }}>
+              <div style={{ fontSize:11, color:C.label, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:5 }}>Formula / Working</div>
+              <code style={{ fontSize:13, fontWeight:600, color:C.formulaCode, fontFamily:C.mono, lineHeight:1.7, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{s.formula}</code>
             </div>
             <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-              <span style={{ fontSize:13, color:C.muted }}>Result:</span>
+              <span style={{ fontSize:13, fontWeight:600, color:C.label }}>Result:</span>
               <span style={{ fontSize:15, fontWeight:800, color:'#22C55E', fontFamily:C.mono }}>{s.result}</span>
             </div>
           </div>
@@ -349,7 +351,7 @@ export function QuickPills({
               padding:'5px 12px', borderRadius:8,
               border:`1px solid ${active === item.value ? accentColor : C.border}`,
               background:active === item.value ? `${accentColor}18` : C.surf,
-              color:active === item.value ? '#93C5FD' : C.muted,
+              color:active === item.value ? accentColor : C.muted,
               fontSize:12, fontWeight:600, cursor:'pointer', transition:'all 120ms',
             }}
           >
@@ -364,7 +366,7 @@ export function QuickPills({
 // ── SectionLabel ───────────────────────────────────────────────────────────────
 export function SectionLabel({ title }: { title: string }) {
   return (
-    <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:14, marginTop:6 }}>{title}</div>
+    <div style={{ fontSize:11, fontWeight:700, color:C.label, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:14, marginTop:6 }}>{title}</div>
   );
 }
 
@@ -396,7 +398,7 @@ export function TextInput({
         {tooltip && (
           <span title={tooltip} style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:15, height:15, borderRadius:'50%', background:C.bg, border:`1px solid ${C.border}`, color:C.muted, fontSize:9, cursor:'help', marginLeft:5, flexShrink:0 }}>?</span>
         )}
-        {unit && <span style={{ marginLeft:'auto', fontSize:11, color:C.dim, fontWeight:600 }}>{unit}</span>}
+        {unit && <span style={{ marginLeft:'auto', fontSize:11, color:C.label, fontWeight:600 }}>{unit}</span>}
       </label>
       <input
         type="number"
@@ -408,7 +410,7 @@ export function TextInput({
         onChange={(e) => onChange(e.target.value)}
         style={{
           width:'100%', height:50, background: disabled ? C.surf : C.input,
-          border:`1px solid ${disabled ? C.border : C.dim}`,
+          border:`1px solid ${disabled ? C.borderLine : C.borderLine}`,
           borderRadius:10, color: disabled ? C.muted : C.text,
           fontSize:15, fontWeight:600, padding:'0 14px',
           fontFamily:'inherit', outline:'none', boxSizing:'border-box',
@@ -442,7 +444,7 @@ export function SelectInput({
           onChange={(e) => onChange(e.target.value)}
           style={{
             width:'100%', height:50, background:C.input,
-            border:`1px solid ${C.dim}`, borderRadius:10,
+            border:`1px solid ${C.borderLine}`, borderRadius:10,
             color:C.text, fontSize:14, fontWeight:600,
             padding:'0 36px 0 14px', fontFamily:'inherit', outline:'none',
             boxSizing:'border-box', cursor:'pointer',
