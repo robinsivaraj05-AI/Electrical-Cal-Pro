@@ -5,6 +5,7 @@ import {
   Lightbulb, Activity, Gauge, Server, Bolt, Grid3x3, Flame, Radio,
   Calculator, BookOpen, Wrench, CloudLightning, BarChart3, FileText,
   Package, ChevronRight, ChevronDown, Moon, Database, Package2, ClipboardList,
+  Download, Upload,
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
@@ -79,6 +80,22 @@ const CATEGORY_SUBITEMS: Record<string, NavItem[]> = {
     { id: 'transformer',        label: 'Transformer Calc',    icon: Activity,        implemented: true },
     { id: 'transformer-dist',   label: 'Distribution Design', icon: LayoutDashboard, implemented: true },
     { id: 'transformer-verify', label: 'Cross Verification',  icon: Shield,          implemented: true },
+  ],
+  _lv: [
+    { id: 'lv-dashboard',       label: 'Project Dashboard',         icon: LayoutDashboard, implemented: true },
+    { id: 'lv-panel-register',  label: 'Panel Register',            icon: Server,          implemented: true },
+    { id: 'lv-load-schedule',   label: 'Electrical Load Schedule',  icon: FileText,        implemented: true },
+    { id: 'lv-mdb-details',     label: 'MDB / SMDB / MCC Details',  icon: Zap,             implemented: true },
+    { id: 'lv-feeder-cable',    label: 'Feeder & Cable Schedule',   icon: Cable,           implemented: true },
+    { id: 'lv-metering-ct',     label: 'Metering & CT Details',     icon: Gauge,           implemented: true },
+    { id: 'lv-load-summary',    label: 'Load Summary',              icon: BarChart3,       implemented: true },
+    { id: 'lv-drawings',        label: 'Electrical Drawings',       icon: BookOpen,        implemented: true },
+    { id: 'lv-power-dist',      label: 'Power Distribution',        icon: Activity,        implemented: true },
+    { id: 'lv-documents',       label: 'Document Management',       icon: Database,        implemented: true },
+    { id: 'lv-inspection',      label: 'Inspection & Verification', icon: ClipboardList,   implemented: true },
+    { id: 'lv-reports',         label: 'Reports & Export',          icon: Download,        implemented: true },
+    { id: 'lv-import',          label: 'Import Excel Data',         icon: Upload,          implemented: true },
+    { id: 'lv-settings',        label: 'Settings',                  icon: Settings,        implemented: true },
   ],
 };
 
@@ -194,6 +211,10 @@ export function Sidebar() {
         {/* I&C ENGINEERING SUITE */}
         <div className="ec-nav-section">Instrumentation & Control</div>
         <NavItem id="_ic" label="I&C Engineering Suite" icon={Gauge} />
+
+        {/* PROJECT LV PANEL */}
+        <div className="ec-nav-section">Project LV Panel</div>
+        <NavItem id="_lv" label="Project LV Panel" icon={Server} />
 
         {/* TOOLS & RESOURCES */}
         <div className="ec-nav-section">Tools & Resources</div>

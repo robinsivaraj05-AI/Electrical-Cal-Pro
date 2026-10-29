@@ -63,6 +63,7 @@ import { ICStudy }       from './components/modules/ICStudy';
 import { ICReports }     from './components/modules/ICReports';
 import { TransformerDistribution } from './components/modules/TransformerDistribution';
 import { TransformerVerify }       from './components/modules/TransformerVerify';
+import { LVPanelModule }           from './components/modules/LVPanelModule';
 import { useStore } from './store/useStore';
 import { useAuthStore } from './store/useAuthStore';
 import AuthModal from './components/auth/AuthModal';
@@ -155,6 +156,20 @@ const MODULE_COMPONENTS: Record<string, React.ReactNode> = {
   'ic-reports':        <ICReports />,
   'transformer-dist':   <TransformerDistribution />,
   'transformer-verify': <TransformerVerify />,
+  'lv-dashboard':       <LVPanelModule section="dashboard" />,
+  'lv-panel-register':  <LVPanelModule section="panel-register" />,
+  'lv-load-schedule':   <LVPanelModule section="load-schedule" />,
+  'lv-mdb-details':     <LVPanelModule section="mdb-details" />,
+  'lv-feeder-cable':    <LVPanelModule section="feeder-cable" />,
+  'lv-metering-ct':     <LVPanelModule section="metering-ct" />,
+  'lv-load-summary':    <LVPanelModule section="load-summary" />,
+  'lv-drawings':        <LVPanelModule section="drawings" />,
+  'lv-power-dist':      <LVPanelModule section="power-dist" />,
+  'lv-documents':       <LVPanelModule section="documents" />,
+  'lv-inspection':      <LVPanelModule section="inspection" />,
+  'lv-reports':         <LVPanelModule section="reports" />,
+  'lv-import':          <LVPanelModule section="import-excel" />,
+  'lv-settings':        <LVPanelModule section="lv-settings" />,
 };
 
 export default function App() {
