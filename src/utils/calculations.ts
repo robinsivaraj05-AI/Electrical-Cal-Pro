@@ -256,8 +256,26 @@ export function calculateCableSizing(inputs: {
     };
   }
 
-  const derated = selected.ampacity[installMethod] * tempFactor * groupFactor;
+  const derated     = selected.ampacity[installMethod] * tempFactor * groupFactor;
   const utilization = (designCurrent / derated) * 100;
+
+  // ── Check 1: Ampacity (verifiable here) ───────────────────────────────────
+  const ampacityOk  = derated >= designCurrent;
+
+  // ── Check 2: Utilization (verifiable here) ────────────────────────────────
+  // > 90 % is borderline; IEC 60364 has no hard cap but good practice is ≤ 80–85 %
+  const utilizHigh  = utilization > 90;
+
+  // ── Checks 3–5: require inputs not available in this function ─────────────
+  // Voltage drop   → needs cable length, system voltage, PF   (use Voltage Drop module)
+  // SC withstand   → needs prospective fault current, duration (use Short-Circuit module)
+  // Protection     → needs upstream device In and type         (check separately)
+  // We explicitly flag these as pending rather than silently assuming compliance.
+
+  const overallStatus: CalculationResult['status'] =
+    !ampacityOk ? 'FAIL'    :  // cable undersized
+    utilizHigh  ? 'WARNING' :  // cable marginal — recommend next size
+    'INFO';                    // ampacity verified; remaining checks still required
 
   const installMethodNames: Record<string, string> = {
     A: 'In conduit on wall',
@@ -296,42 +314,65 @@ export function calculateCableSizing(inputs: {
       step: 5,
       description: 'Select cable from IEC 60364-5-52 Table',
       formula: `Select next standard size ≥ ${requiredCapacity.toFixed(1)} A for method ${installMethod} (${installMethodNames[installMethod]})`,
-      result: `${selected.size} mm² ${conductor} ${insulation} — Table capacity: ${selected.ampacity[installMethod]} A`,
+      result: `${selected.size} mm² ${conductor} ${insulation} — tabulated ${selected.ampacity[installMethod]} A`,
     },
     {
       step: 6,
-      description: 'Verify derated capacity ≥ design current',
-      formula: `I_z = ${selected.ampacity[installMethod]} × ${tempFactor.toFixed(3)} × ${groupFactor.toFixed(3)}`,
-      result: `${derated.toFixed(1)} A ≥ ${designCurrent.toFixed(1)} A ✓`,
+      description: 'Verify derated capacity ≥ design current (IEC 60364-5-52 §523)',
+      formula: `I_z = ${selected.ampacity[installMethod]} × C_f × C_g = ${selected.ampacity[installMethod]} × ${tempFactor.toFixed(3)} × ${groupFactor.toFixed(3)}`,
+      result: `${derated.toFixed(1)} A ${ampacityOk ? '≥' : '<'} ${designCurrent.toFixed(1)} A — ${ampacityOk ? '✓ PASS' : '✗ FAIL'}`,
+    },
+    {
+      step: 7,
+      description: 'Design verification summary — checks completed vs. pending',
+      formula: [
+        `✓ Ampacity check (IEC 60364-5-52): ${ampacityOk ? 'PASS' : 'FAIL'} — I_z ${derated.toFixed(1)} A ${ampacityOk ? '≥' : '<'} I_d ${designCurrent.toFixed(1)} A`,
+        `${utilizHigh ? '⚠' : '✓'} Utilization: ${utilization.toFixed(1)}% ${utilizHigh ? '(> 90 % — consider next cable size)' : '(acceptable)'}`,
+        '⊙ Voltage drop: PENDING — run Voltage Drop module (needs length, V, PF)',
+        '⊙ SC thermal withstand: PENDING — run Short-Circuit module (needs Ik, t)',
+        '⊙ Protective device coordination: PENDING — verify I_n_device ≤ I_z',
+      ].join('  |  '),
+      result: overallStatus === 'FAIL'
+        ? 'FAIL — cable must be upsized'
+        : overallStatus === 'WARNING'
+        ? 'WARNING — ampacity borderline; complete all pending checks before finalising'
+        : 'INFO — ampacity check PASSED; complete 3 pending checks to confirm full design compliance',
     },
   ];
 
+  const utilizStatus: CalculationResult['status'] =
+    utilization > 90 ? 'WARNING' : utilization > 75 ? 'INFO' : 'PASS';
+
   return {
     values: [
-      { label: 'Selected Cable Size', value: `${selected.size} mm²`, unit: '', highlight: true },
-      { label: 'Cable Type', value: `${conductor} ${insulation}`, unit: '' },
-      { label: 'Installation Method', value: `${installMethod} — ${installMethodNames[installMethod]}`, unit: '' },
-      { label: 'Tabulated Ampacity', value: selected.ampacity[installMethod].toString(), unit: 'A' },
-      { label: 'Derated Ampacity', value: derated.toFixed(1), unit: 'A', highlight: true },
-      { label: 'Design Current', value: designCurrent.toFixed(1), unit: 'A' },
-      { label: 'Temperature Factor (Cf)', value: tempFactor.toFixed(3), unit: '' },
-      { label: 'Grouping Factor (Cg)', value: groupFactor.toFixed(3), unit: '' },
-      { label: 'Cable Utilization', value: utilization.toFixed(1), unit: '%', status: utilization > 90 ? 'WARNING' : 'PASS' },
-      { label: 'Cable Resistance', value: selected.resistance.toString(), unit: 'Ω/km' },
-      { label: 'Cable Reactance', value: selected.reactance.toString(), unit: 'Ω/km' },
-      { label: 'Overall Diameter', value: selected.od.toString(), unit: 'mm' },
+      { label: 'Selected Cable Size',       value: `${selected.size} mm²`,                 unit: '',    highlight: true },
+      { label: 'Cable Type',                value: `${conductor} ${insulation}`,            unit: ''    },
+      { label: 'Installation Method',       value: `${installMethod} — ${installMethodNames[installMethod]}`, unit: '' },
+      { label: 'Tabulated Ampacity',        value: selected.ampacity[installMethod].toString(), unit: 'A' },
+      { label: 'Derated Ampacity (I_z)',    value: derated.toFixed(1),                     unit: 'A',   highlight: true, status: ampacityOk ? 'PASS' : 'FAIL' },
+      { label: 'Design Current (I_d)',      value: designCurrent.toFixed(1),               unit: 'A'    },
+      { label: 'Cable Utilization',         value: utilization.toFixed(1),                 unit: '%',   status: utilizStatus },
+      { label: 'Temperature Factor (Cf)',   value: tempFactor.toFixed(3),                  unit: ''    },
+      { label: 'Grouping Factor (Cg)',      value: groupFactor.toFixed(3),                 unit: ''    },
+      { label: 'Ampacity Check',            value: ampacityOk ? 'PASS' : 'FAIL',           unit: '',    status: ampacityOk ? 'PASS' : 'FAIL' },
+      { label: 'Voltage Drop Check',        value: 'PENDING',                              unit: '',    status: 'INFO'  },
+      { label: 'SC Withstand Check',        value: 'PENDING',                              unit: '',    status: 'INFO'  },
+      { label: 'Cable Resistance',          value: selected.resistance.toString(),          unit: 'Ω/km' },
+      { label: 'Overall Diameter',          value: selected.od.toString(),                 unit: 'mm'  },
     ],
-    status: 'PASS',
-    recommendation: `Recommended: ${selected.size} mm² ${conductor} ${insulation} 3-core armoured cable, installed by method ${installMethod}. Derated ampacity: ${derated.toFixed(1)} A (${utilization.toFixed(1)}% utilization).`,
+    status: overallStatus,
+    recommendation: ampacityOk
+      ? `${selected.size} mm² ${conductor} ${insulation} method ${installMethod}: I_z = ${derated.toFixed(1)} A ≥ I_d = ${designCurrent.toFixed(1)} A (${utilization.toFixed(1)}% utilisation) — ampacity check PASSED.${utilizHigh ? ' Utilisation > 90 % — consider next cable size.' : ''} Still required: voltage drop (Voltage Drop module), SC thermal withstand (Short-Circuit module), protective device coordination.`
+      : `Ampacity FAIL — derated capacity ${derated.toFixed(1)} A < design current ${designCurrent.toFixed(1)} A. Select a larger cable or reduce grouping/ambient-temperature derating.`,
     formula: 'I_z = I_t × C_f × C_g',
     steps,
     safetyFactor: derated / designCurrent,
     standardRef: {
       standard: 'IEC 60364-5-52',
-      clause: 'Table B.52.2',
+      clause: '§523, Table B.52.2',
       table: 'Table B.52.14, B.52.17',
-      equation: 'I_z = I_t × C_f × C_g',
-      title: 'Wiring systems — Current-carrying capacity',
+      equation: 'I_z ≥ I_d = I_n × F_fut',
+      title: 'Wiring systems — Current-carrying capacity and derating',
     },
   };
 }
