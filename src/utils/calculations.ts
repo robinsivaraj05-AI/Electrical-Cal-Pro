@@ -16,57 +16,95 @@ export function calculateCableCurrent(inputs: {
 }): CalculationResult {
   const { power, powerUnit, voltage, phases, powerFactor, efficiency } = inputs;
 
-  let kW = power;
-  if (powerUnit === 'kVA') kW = power * powerFactor;
-  if (powerUnit === 'HP') kW = power * 0.7457;
+  // ── Derive apparent power S [kVA] and display active power P [kW] ──────────
+  //
+  // kVA: supply apparent power is known directly.  η does NOT apply — kVA already
+  //      describes what the cable must carry at the supply terminal.
+  //
+  // kW:  active (shaft) power.  η converts shaft → electrical active;
+  //      PF converts active → apparent.  Both factors are single-pass.
+  //
+  // HP:  shaft power → kW_shaft → same path as kW.
+  //
+  // DC:  no reactive power (PF = 1).  η applies to shaft-power inputs only.
 
-  const kVA = kW / powerFactor;
-  let current = 0;
+  let S_kVA: number;   // apparent power the cable carries [kVA]
+  let P_kW: number;    // active power at supply terminals [kW]  (display)
+  let convStep: CalculationStep;
 
-  if (phases === 3) {
-    current = (kW * 1000) / (Math.sqrt(3) * voltage * powerFactor * efficiency);
-  } else if (phases === 1) {
-    current = (kW * 1000) / (voltage * powerFactor * efficiency);
+  if (powerUnit === 'kVA') {
+    S_kVA = power;
+    P_kW  = power * powerFactor;
+    convStep = {
+      step: 1,
+      description: 'kVA input — apparent power is known directly (no PF or η correction)',
+      formula: `S = ${power} kVA  →  P = S × cosφ = ${power} × ${powerFactor}`,
+      result: `S = ${S_kVA.toFixed(2)} kVA,  P = ${P_kW.toFixed(2)} kW`,
+    };
   } else {
-    current = (kW * 1000) / (voltage * efficiency);
+    const kW_shaft = powerUnit === 'HP' ? power * 0.7457 : power;
+    const kW_elec  = kW_shaft / efficiency;   // electrical active power input
+    P_kW  = kW_elec;
+    S_kVA = phases === 'DC' ? kW_elec : kW_elec / powerFactor;
+    convStep = powerUnit === 'HP'
+      ? {
+          step: 1,
+          description: 'HP → shaft kW → electrical input → apparent power',
+          formula: `P_shaft = ${power} HP × 0.7457 = ${kW_shaft.toFixed(2)} kW;  P_elec = P_shaft / η = ${kW_shaft.toFixed(2)} / ${efficiency} = ${kW_elec.toFixed(2)} kW;  S = P_elec / cosφ = ${kW_elec.toFixed(2)} / ${powerFactor}`,
+          result: `S = ${S_kVA.toFixed(2)} kVA`,
+        }
+      : {
+          step: 1,
+          description: 'kW shaft power → electrical input → apparent power',
+          formula: `P_elec = P / η = ${power} / ${efficiency} = ${kW_elec.toFixed(2)} kW;  S = P_elec / cosφ = ${kW_elec.toFixed(2)} / ${powerFactor}`,
+          result: `S = ${S_kVA.toFixed(2)} kVA`,
+        };
   }
 
-  const phaseFactor = phases === 3 ? '√3' : phases === 1 ? '1' : 'DC';
-  const formula =
-    phases === 3
-      ? 'I = P / (√3 × V × cosφ × η)'
-      : phases === 1
-      ? 'I = P / (V × cosφ × η)'
-      : 'I = P / (V × η)';
+  const Q_kVAR = Math.sqrt(Math.max(0, S_kVA ** 2 - P_kW ** 2));
+
+  // ── Current — always derived from apparent power ─────────────────────────
+  let current: number;
+  let formula: string;
+  const phaseFactor = phases === 3 ? '√3' : '1';
+
+  if (phases === 3) {
+    current = (S_kVA * 1000) / (Math.sqrt(3) * voltage);
+    formula = powerUnit === 'kVA' ? 'I = S / (√3 × V)' : 'I = P / (√3 × V × cosφ × η)';
+  } else if (phases === 1) {
+    current = (S_kVA * 1000) / voltage;
+    formula = powerUnit === 'kVA' ? 'I = S / V' : 'I = P / (V × cosφ × η)';
+  } else {
+    // DC: S_kVA = kW_elec (PF = 1 implicitly)
+    current = (S_kVA * 1000) / voltage;
+    formula = 'I = P_dc / V';
+  }
 
   const steps: CalculationStep[] = [
-    {
-      step: 1,
-      description: 'Convert power to kW',
-      formula: powerUnit === 'kW' ? `P = ${power} kW` : powerUnit === 'HP' ? `P = ${power} HP × 0.7457 = ${kW.toFixed(2)} kW` : `P = ${power} kVA × ${powerFactor} = ${kW.toFixed(2)} kW`,
-      result: `${kW.toFixed(2)} kW`,
-    },
+    convStep,
     {
       step: 2,
-      description: 'Calculate apparent power',
-      formula: `S = P / cosφ = ${kW.toFixed(2)} / ${powerFactor}`,
-      result: `${kVA.toFixed(2)} kVA`,
+      description: 'Reactive power',
+      formula: `Q = √(S² − P²) = √(${S_kVA.toFixed(2)}² − ${P_kW.toFixed(2)}²)`,
+      result: `${Q_kVAR.toFixed(2)} kVAR`,
     },
     {
       step: 3,
-      description: 'Calculate full load current',
-      formula: `I = ${kW.toFixed(2)} × 1000 / (${phaseFactor} × ${voltage} × ${powerFactor} × ${efficiency})`,
+      description: 'Full load current',
+      formula: phases === 'DC'
+        ? `I = P_dc / V = ${S_kVA.toFixed(2)}k / ${voltage}`
+        : `I = S / (${phaseFactor} × V) = ${S_kVA.toFixed(2)}k / (${phases === 3 ? '√3 × ' : ''}${voltage})`,
       result: `${current.toFixed(2)} A`,
     },
   ];
 
   return {
     values: [
-      { label: 'Active Power', value: kW.toFixed(2), unit: 'kW', highlight: false },
-      { label: 'Apparent Power', value: kVA.toFixed(2), unit: 'kVA' },
-      { label: 'Reactive Power', value: (Math.sqrt(kVA ** 2 - kW ** 2)).toFixed(2), unit: 'kVAR' },
-      { label: 'Full Load Current', value: current.toFixed(2), unit: 'A', highlight: true },
-      { label: 'Design Current (125%)', value: (current * 1.25).toFixed(2), unit: 'A' },
+      { label: 'Active Power',          value: P_kW.toFixed(2),                unit: 'kW'   },
+      { label: 'Apparent Power',        value: S_kVA.toFixed(2),               unit: 'kVA'  },
+      { label: 'Reactive Power',        value: Q_kVAR.toFixed(2),              unit: 'kVAR' },
+      { label: 'Full Load Current',     value: current.toFixed(2),             unit: 'A',    highlight: true },
+      { label: 'Design Current (125%)', value: (current * 1.25).toFixed(2),    unit: 'A'    },
     ],
     status: 'INFO',
     recommendation: `Full load current is ${current.toFixed(1)} A. Use ${(current * 1.25).toFixed(0)} A as design current (125% for continuous load per IEC 60364-4-43).`,
