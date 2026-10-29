@@ -9,9 +9,9 @@ import {
 import { useLVPanelStore, FEEDER_INSTALL_STATUSES, SITE_VERIF_STATUSES } from '../../store/useLVPanelStore';
 import type {
   LVPanel, LVFeeder, LVLoad, LVMeter, LVDrawing, LVInspection, LVDocument,
-  LVCalcRecord, LVSwitchingRecord, LVBreakerState,
+  LVCalcRecord, LVSwitchingRecord, LVBreakerState, LVProjectSnapshot,
   MeteringPriority, EmsStatus, CalcType, VerificationStatus,
-  SiteVerifStatus, CheckResult, LVAuditEntry, LVImportBatch,
+  SiteVerifStatus, CheckResult, LVAuditEntry, LVImportBatch, ImportMode,
 } from '../../store/useLVPanelStore';
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
@@ -3325,7 +3325,7 @@ function ImportExcel() {
   const [parsed, setParsed] = useState<ParseResult | null>(null);
   const [fileName, setFileName] = useState('');
   const [activeTab, setActiveTab] = useState<'classify' | 'panels' | 'loads' | 'feeders' | 'errors' | 'history'>('classify');
-  const [mergeMode, setMergeMode] = useState(true);
+  const [importMode, setImportMode] = useState<ImportMode>('merge');
   const [imported, setImported] = useState<{ panels: number; loads: number; feeders: number } | null>(null);
   const [expandSheet, setExpandSheet] = useState<string | null>(null);
 
@@ -3347,9 +3347,9 @@ function ImportExcel() {
 
   const doImport = () => {
     if (!parsed) return;
-    importPanels(parsed.panels, mergeMode);
-    importFeeders(parsed.feeders, mergeMode);
-    importLoads(parsed.loads, mergeMode);
+    importPanels(parsed.panels, importMode);
+    importFeeders(parsed.feeders, importMode);
+    importLoads(parsed.loads, importMode);
     const total = parsed.panels.length + parsed.loads.length + parsed.feeders.length;
     const flagged = parsed.errorLog.length;
     addImportBatch({
@@ -3569,30 +3569,50 @@ function ImportExcel() {
           {/* Step 3 — commit */}
           {activeTab !== 'history' && (
             <div style={{ ...card(), marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 3 — Commit Import</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 10 }}>
-                <input type="checkbox" checked={mergeMode} onChange={e => setMergeMode(e.target.checked)} />
-                <span style={{ fontSize: 12, color: 'var(--ec-text-secondary)' }}>
-                  Merge mode — skip duplicate panels/feeders (matched by ID), only add new records
-                </span>
-              </label>
-              {!mergeMode && (
-                <div style={{ background: '#EF444422', border: '1px solid #EF444455', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#EF4444' }}>
-                  Replace mode — existing panels and feeders will be overwritten.
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Step 3 — Choose Import Mode & Commit</div>
+
+              {/* 3-mode selector */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 14 }}>
+                {([
+                  { mode: 'merge' as ImportMode, label: 'Merge', icon: '⊕', desc: 'Add new records only. Skip rows whose Panel ID / Feeder Ref already exists.', color: '#22C55E' },
+                  { mode: 'update' as ImportMode, label: 'Update', icon: '↺', desc: 'Add new records AND overwrite matching existing records with data from the file.', color: ACCENT },
+                  { mode: 'replace' as ImportMode, label: 'Replace', icon: '⚠', desc: 'Delete all existing panels / feeders / loads and replace with file contents.', color: '#EF4444' },
+                ] as { mode: ImportMode; label: string; icon: string; desc: string; color: string }[]).map(m => (
+                  <button key={m.mode} onClick={() => setImportMode(m.mode)} style={{
+                    padding: '12px 14px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                    border: `2px solid ${importMode === m.mode ? m.color : 'var(--ec-border)'}`,
+                    background: importMode === m.mode ? m.color + '18' : 'var(--ec-bg-surface)',
+                    transition: 'all 0.15s',
+                  }}>
+                    <div style={{ fontSize: 16, marginBottom: 4 }}>{m.icon}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: importMode === m.mode ? m.color : 'var(--ec-text-primary)', marginBottom: 4 }}>{m.label}</div>
+                    <div style={{ fontSize: 10, color: 'var(--ec-text-muted)', lineHeight: 1.5 }}>{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {importMode === 'replace' && (
+                <div style={{ background: '#EF444422', border: '1px solid #EF444455', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#EF4444', fontWeight: 600 }}>
+                  Replace mode will permanently remove all existing panels, feeders, and loads before importing.
                 </div>
               )}
-              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 12 }}>
-                Ready to commit: {parsed.panels.length} panels · {parsed.loads.length} loads · {parsed.feeders.length} feeders
+
+              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 14 }}>
+                Ready to commit: <b style={{ color: 'var(--ec-text-primary)' }}>{parsed.panels.length} panels · {parsed.loads.length} loads · {parsed.feeders.length} feeders</b>
                 {parsed.errorLog.length > 0 && <span style={{ color: '#F59E0B', marginLeft: 8 }}>· {parsed.errorLog.length} flagged rows excluded</span>}
               </div>
+
               {imported ? (
-                <div style={{ background: '#22C55E22', border: '1px solid #22C55E55', borderRadius: 10, padding: 14, fontSize: 13, color: '#22C55E' }}>
-                  Import complete — {imported.panels} panels, {imported.loads} loads, {imported.feeders} feeders committed.
+                <div style={{ background: '#22C55E22', border: '1px solid #22C55E55', borderRadius: 10, padding: 14, fontSize: 13, color: '#22C55E', fontWeight: 600 }}>
+                  Import complete ({importMode} mode) — {imported.panels} panels, {imported.loads} loads, {imported.feeders} feeders saved.
+                  <div style={{ marginTop: 8 }}>
+                    <button style={btn('#475569', { fontSize: 11 })} onClick={() => { setParsed(null); setFileName(''); setImported(null); }}>Import Another File</button>
+                  </div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button style={btn('#22C55E')} onClick={doImport}>
-                    <CheckCircle style={{ width: 14, height: 14 }} /> Commit {parsed.panels.length + parsed.loads.length + parsed.feeders.length} Records
+                  <button style={btn(importMode === 'replace' ? '#EF4444' : importMode === 'update' ? ACCENT : '#22C55E')} onClick={doImport}>
+                    <CheckCircle style={{ width: 14, height: 14 }} /> {importMode === 'replace' ? 'Replace &' : importMode === 'update' ? 'Update &' : 'Merge &'} Save {parsed.panels.length + parsed.loads.length + parsed.feeders.length} Records
                   </button>
                   <button style={btn('#475569')} onClick={() => { setParsed(null); setFileName(''); }}>Cancel</button>
                 </div>
@@ -3608,15 +3628,50 @@ function ImportExcel() {
 // ─── SECTION: Settings ────────────────────────────────────────────────────────
 
 function LVSettings() {
-  const { projectInfo, setProjectInfo, panels, feeders, loads, meters, drawings, inspections, documents, clearAll } = useLVPanelStore();
+  const store = useLVPanelStore();
+  const { projectInfo, setProjectInfo, panels, feeders, loads, meters, drawings, inspections, documents, calcs, switchingRecords, clearAll, loadFromJSON } = store;
   const [form, setForm] = useState(projectInfo);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [loadStatus, setLoadStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const jsonFileRef = useRef<HTMLInputElement>(null);
   const setF = (k: keyof typeof form, v: string | number) => setForm(f => ({ ...f, [k]: v }));
+
+  const saveToFile = () => {
+    const snapshot: LVProjectSnapshot = {
+      _version: 1,
+      exportedAt: new Date().toISOString(),
+      projectInfo, panels, feeders, loads, meters, drawings, inspections, documents, calcs, switchingRecords,
+    };
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${projectInfo.projectNo || 'LV_Panel'}_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const handleLoadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as LVProjectSnapshot;
+      if (data._version !== 1) throw new Error('Unrecognised file format');
+      loadFromJSON(data);
+      setLoadStatus({ ok: true, msg: `Loaded from "${file.name}" — ${data.panels?.length ?? 0} panels, ${data.feeders?.length ?? 0} feeders, ${data.loads?.length ?? 0} loads restored.` });
+    } catch (err) {
+      setLoadStatus({ ok: false, msg: `Failed to load: ${(err as Error).message}` });
+    }
+    e.target.value = '';
+  };
+
+  const totalRecords = panels.length + feeders.length + loads.length + meters.length + drawings.length + inspections.length + documents.length;
 
   return (
     <div>
-      <SectionHeader title="Project Settings" subtitle="Project information and data management" icon={Settings} />
+      <SectionHeader title="Project Settings" subtitle="Project information, file backup and data management" icon={Settings} />
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+        {/* Project Info */}
         <div style={card()}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>Project Information</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
@@ -3648,13 +3703,15 @@ function LVSettings() {
             </div>
           </div>
           <button style={btn(ACCENT)} onClick={() => setProjectInfo(form)}>
-            <CheckCircle style={{ width: 13, height: 13 }} /> Save Changes
+            <CheckCircle style={{ width: 13, height: 13 }} /> Save Project Info
           </button>
         </div>
 
+        {/* Right column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Record counts */}
           <div style={card()}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Record Counts</div>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Record Summary</div>
             {[
               ['Panels', panels.length], ['Feeders', feeders.length], ['Loads', loads.length],
               ['Meters', meters.length], ['Drawings', drawings.length],
@@ -3665,18 +3722,21 @@ function LVSettings() {
                 <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT }}>{v}</span>
               </div>
             ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', marginTop: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ec-text-primary)' }}>Total Records</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT }}>{totalRecords}</span>
+            </div>
           </div>
 
+          {/* Danger zone */}
           <div style={{ ...card(), border: '1px solid rgba(239,68,68,0.3)' }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#EF4444', marginBottom: 8 }}>Danger Zone</div>
             <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 12 }}>
-              This will permanently delete all panels, loads, feeders, and related records.
+              Permanently deletes all panels, feeders, loads and related records from localStorage.
             </div>
             {confirmClear ? (
               <div style={{ display: 'flex', gap: 8 }}>
-                <button style={btn('#EF4444')} onClick={() => { clearAll(); setConfirmClear(false); }}>
-                  Yes, Delete All
-                </button>
+                <button style={btn('#EF4444')} onClick={() => { clearAll(); setConfirmClear(false); }}>Yes, Delete All</button>
                 <button style={btn('#475569')} onClick={() => setConfirmClear(false)}>Cancel</button>
               </div>
             ) : (
@@ -3685,6 +3745,56 @@ function LVSettings() {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* File backup & restore */}
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: 'var(--ec-text-primary)' }}>Project File — Save & Restore</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
+        {/* Save to file */}
+        <div style={card({ display: 'flex', flexDirection: 'column', gap: 10 })}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ background: '#22C55E22', borderRadius: 10, padding: 12 }}>
+              <Download style={{ width: 24, height: 24, color: '#22C55E' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Save Project to File</div>
+              <div style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Exports all {totalRecords} records to a .json backup file</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', lineHeight: 1.6 }}>
+            All panels, feeders, loads, meters, drawings, inspections and documents are saved in a single JSON file.
+            Use this to back up your work or transfer data between devices.
+          </div>
+          <button style={btn('#22C55E')} onClick={saveToFile} disabled={totalRecords === 0}>
+            <Download style={{ width: 13, height: 13 }} /> Save {projectInfo.projectNo || 'Project'} to .json
+          </button>
+        </div>
+
+        {/* Load from file */}
+        <div style={card({ display: 'flex', flexDirection: 'column', gap: 10 })}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ background: ACCENT + '22', borderRadius: 10, padding: 12 }}>
+              <Upload style={{ width: 24, height: 24, color: ACCENT }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Load Project from File</div>
+              <div style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Restores a previously saved .json backup</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', lineHeight: 1.6 }}>
+            All sections (panels, feeders, loads, meters, drawings, inspections, documents) will be restored from
+            the file. Existing data in localStorage will be overwritten for sections included in the file.
+          </div>
+          <input ref={jsonFileRef} type="file" accept=".json" onChange={handleLoadFile} style={{ display: 'none' }} />
+          <button style={btn(ACCENT)} onClick={() => jsonFileRef.current?.click()}>
+            <Upload style={{ width: 13, height: 13 }} /> Load from .json File
+          </button>
+          {loadStatus && (
+            <div style={{ background: loadStatus.ok ? '#22C55E22' : '#EF444422', border: `1px solid ${loadStatus.ok ? '#22C55E55' : '#EF444455'}`, borderRadius: 8, padding: '8px 12px', fontSize: 11, color: loadStatus.ok ? '#22C55E' : '#EF4444', fontWeight: 600 }}>
+              {loadStatus.ok ? '✓' : '✗'} {loadStatus.msg}
+            </div>
+          )}
         </div>
       </div>
     </div>

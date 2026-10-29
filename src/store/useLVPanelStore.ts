@@ -487,10 +487,28 @@ interface LVPanelState {
   updateSwitchingRecord: (id: string, r: Partial<LVSwitchingRecord>) => void;
   deleteSwitchingRecord: (id: string) => void;
   addImportBatch: (b: Omit<LVImportBatch, 'id'>) => void;
-  importPanels: (panels: Omit<LVPanel, 'id' | 'createdAt' | 'updatedAt'>[], merge?: boolean) => void;
-  importFeeders: (feeders: Omit<LVFeeder, 'id' | 'createdAt'>[], merge?: boolean) => void;
-  importLoads: (loads: Omit<LVLoad, 'id'>[], merge?: boolean) => void;
+  importPanels: (panels: Omit<LVPanel, 'id' | 'createdAt' | 'updatedAt'>[], mode?: ImportMode) => void;
+  importFeeders: (feeders: Omit<LVFeeder, 'id' | 'createdAt'>[], mode?: ImportMode) => void;
+  importLoads: (loads: Omit<LVLoad, 'id'>[], mode?: ImportMode) => void;
+  loadFromJSON: (data: LVProjectSnapshot) => void;
   clearAll: () => void;
+}
+
+export type ImportMode = 'merge' | 'update' | 'replace';
+
+export interface LVProjectSnapshot {
+  _version: number;
+  exportedAt: string;
+  projectInfo?: LVProjectInfo;
+  panels?: LVPanel[];
+  feeders?: LVFeeder[];
+  loads?: LVLoad[];
+  meters?: LVMeter[];
+  drawings?: LVDrawing[];
+  inspections?: LVInspection[];
+  documents?: LVDocument[];
+  calcs?: LVCalcRecord[];
+  switchingRecords?: LVSwitchingRecord[];
 }
 
 export const useLVPanelStore = create<LVPanelState>((set, get) => ({
@@ -634,31 +652,76 @@ export const useLVPanelStore = create<LVPanelState>((set, get) => ({
     saveLS('importBatches', importBatches); set({ importBatches });
   },
 
-  importPanels: (panels, merge = false) => {
+  importPanels: (panels, mode = 'merge') => {
     const existing = get().panels;
-    const existingIds = new Set(existing.map(p => p.panelId));
-    const newPanels = merge
-      ? [...existing, ...panels.filter(p => !existingIds.has(p.panelId)).map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }))]
-      : panels.map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }));
+    let newPanels: LVPanel[];
+    if (mode === 'replace') {
+      newPanels = panels.map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }));
+    } else if (mode === 'update') {
+      const byId = new Map(existing.map(p => [p.panelId, p]));
+      panels.forEach(p => {
+        if (byId.has(p.panelId)) byId.set(p.panelId, { ...byId.get(p.panelId)!, ...p, updatedAt: now() });
+        else byId.set(p.panelId, { ...p, id: uid(), createdAt: now(), updatedAt: now() });
+      });
+      newPanels = [...byId.values()];
+    } else {
+      const existingIds = new Set(existing.map(p => p.panelId));
+      newPanels = [...existing, ...panels.filter(p => !existingIds.has(p.panelId)).map(p => ({ ...p, id: uid(), createdAt: now(), updatedAt: now() }))];
+    }
     saveLS('panels', newPanels); set({ panels: newPanels });
   },
 
-  importFeeders: (feeders, merge = false) => {
+  importFeeders: (feeders, mode = 'merge') => {
     const existing = get().feeders;
-    const existingRefs = new Set(existing.map(f => f.feederRef));
-    const toAdd = merge ? feeders.filter(f => !existingRefs.has(f.feederRef)) : feeders;
-    const newFeeders = merge
-      ? [...existing, ...toAdd.map(f => migrateFeeder({ ...f, id: uid(), createdAt: now() }))]
-      : feeders.map(f => migrateFeeder({ ...f, id: uid(), createdAt: now() }));
+    let newFeeders: LVFeeder[];
+    if (mode === 'replace') {
+      newFeeders = feeders.map(f => migrateFeeder({ ...f, id: uid(), createdAt: now() }));
+    } else if (mode === 'update') {
+      const byRef = new Map(existing.map(f => [f.feederRef, f]));
+      feeders.forEach(f => {
+        if (byRef.has(f.feederRef)) byRef.set(f.feederRef, migrateFeeder({ ...byRef.get(f.feederRef)!, ...f }));
+        else byRef.set(f.feederRef, migrateFeeder({ ...f, id: uid(), createdAt: now() }));
+      });
+      newFeeders = [...byRef.values()];
+    } else {
+      const existingRefs = new Set(existing.map(f => f.feederRef));
+      newFeeders = [...existing, ...feeders.filter(f => !existingRefs.has(f.feederRef)).map(f => migrateFeeder({ ...f, id: uid(), createdAt: now() }))];
+    }
     saveLS('feeders', newFeeders); set({ feeders: newFeeders });
   },
 
-  importLoads: (loads, merge = false) => {
+  importLoads: (loads, mode = 'merge') => {
     const existing = get().loads;
-    const newLoads = merge
-      ? [...existing, ...loads.map(l => migrateLoad({ ...l, id: uid() }))]
-      : loads.map(l => migrateLoad({ ...l, id: uid() }));
+    let newLoads: LVLoad[];
+    if (mode === 'replace') {
+      newLoads = loads.map(l => migrateLoad({ ...l, id: uid() }));
+    } else if (mode === 'update') {
+      const byKey = new Map(existing.map(l => [`${l.panelId}::${l.circuitRef}`, l]));
+      loads.forEach(l => {
+        const key = `${l.panelId}::${l.circuitRef}`;
+        if (byKey.has(key)) byKey.set(key, migrateLoad({ ...byKey.get(key)!, ...l }));
+        else byKey.set(key, migrateLoad({ ...l, id: uid() }));
+      });
+      newLoads = [...byKey.values()];
+    } else {
+      newLoads = [...existing, ...loads.map(l => migrateLoad({ ...l, id: uid() }))];
+    }
     saveLS('loads', newLoads); set({ loads: newLoads });
+  },
+
+  loadFromJSON: (data) => {
+    const s: Partial<LVPanelState> = {};
+    if (data.projectInfo) { saveLS('project', data.projectInfo); s.projectInfo = data.projectInfo; }
+    if (data.panels)       { saveLS('panels', data.panels);      s.panels = data.panels; }
+    if (data.feeders)      { const f = data.feeders.map(x => migrateFeeder(x as unknown as Record<string,unknown>)); saveLS('feeders', f); s.feeders = f; }
+    if (data.loads)        { const l = data.loads.map(x => migrateLoad(x as unknown as Record<string,unknown>)); saveLS('loads', l); s.loads = l; }
+    if (data.meters)       { const m = data.meters.map(x => migrateMeter(x as unknown as Record<string,unknown>)); saveLS('meters', m); s.meters = m; }
+    if (data.drawings)     { const d = data.drawings.map(x => migrateDrawing(x as unknown as Record<string,unknown>)); saveLS('drawings', d); s.drawings = d; }
+    if (data.inspections)  { const i = data.inspections.map(x => migrateInspection(x as unknown as Record<string,unknown>)); saveLS('inspections', i); s.inspections = i; }
+    if (data.documents)    { saveLS('documents', data.documents); s.documents = data.documents; }
+    if (data.calcs)        { saveLS('calcs', data.calcs); s.calcs = data.calcs; }
+    if (data.switchingRecords) { saveLS('switching', data.switchingRecords); s.switchingRecords = data.switchingRecords; }
+    set(s);
   },
 
   clearAll: () => {
