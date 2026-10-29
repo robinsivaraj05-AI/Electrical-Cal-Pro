@@ -45,7 +45,6 @@ type Feeder = {
   multicore: boolean;
   armoured: boolean;
   installMethod: string;
-  numRuns: number;
   ambientTemp: number;
   groupSize: number;
 };
@@ -86,19 +85,22 @@ const groupFactor = (n: number) => [1.0, 0.80, 0.70, 0.65, 0.60, 0.57][Math.min(
 const installMultiplier = (method: string): number =>
   ({ 'Tray': 1.0, 'Conduit': 0.77, 'Underground': 0.85, 'Open Air': 1.22, 'Wall': 0.90 } as Record<string, number>)[method] ?? 1.0;
 
-const selectCableSize = (designI: number, f: Feeder): { sizeIdx: number; derated: number } => {
+const selectCableSize = (designI: number, f: Feeder): { sizeIdx: number; derated: number; numRuns: number } => {
   const baseAmps = f.insulation === 'XLPE'
     ? (f.conductor === 'Cu' ? AMP_CU_XLPE : AMP_AL_XLPE)
     : AMP_CU_PVC;
   const ct = tempCorrection(f.ambientTemp, f.insulation);
   const gf = groupFactor(f.groupSize);
   const im = installMultiplier(f.installMethod);
-  const required = designI / (f.numRuns || 1);
+  // Auto-determine runs: how many parallel cables needed if even 300mm² is undersized
+  const maxDerated = baseAmps[SIZES.length - 1] * ct * gf * im;
+  const numRuns = Math.max(1, Math.ceil(designI / maxDerated));
+  const required = designI / numRuns;
   for (let i = 0; i < SIZES.length; i++) {
     const derated = baseAmps[i] * ct * gf * im;
-    if (derated >= required) return { sizeIdx: i, derated: derated * (f.numRuns || 1) };
+    if (derated >= required) return { sizeIdx: i, derated: derated * numRuns, numRuns };
   }
-  return { sizeIdx: SIZES.length - 1, derated: baseAmps[SIZES.length - 1] * ct * gf * im * (f.numRuns || 1) };
+  return { sizeIdx: SIZES.length - 1, derated: maxDerated * numRuns, numRuns };
 };
 
 const voltageDrop = (I: number, L: number, R: number, X: number, pf: number, phases: 1 | 3) => {
@@ -142,7 +144,7 @@ const defaultFeeder = (): Feeder => ({
   loadType: 'motor', demandFactor: 0.8, diversityFactor: 1.0, utilizationFactor: 0.85,
   startingMethod: 'DOL', startingCurrentMult: 6, isExisting: false,
   cableLength: 50, conductor: 'Cu', insulation: 'XLPE', multicore: true, armoured: true,
-  installMethod: 'Tray', numRuns: 1, ambientTemp: 40, groupSize: 1,
+  installMethod: 'Tray', ambientTemp: 40, groupSize: 1,
 });
 
 // ─── Styling helpers ──────────────────────────────────────────────────────────
@@ -261,18 +263,19 @@ export function TransformerDistribution() {
   // ── Per-feeder calcs ──
   const feederCalcs = useMemo(() => feeders.map(f => {
     const Ib = designCurrent(f.ratedKW, f.efficiency, f.powerFactor, f.voltage, f.phases, f.quantity);
-    const { sizeIdx, derated } = selectCableSize(Ib, f);
+    const { sizeIdx, derated, numRuns } = selectCableSize(Ib, f);
     const Iz = derated;
     const In = selectBreaker(Ib, Iz);
     const res_per_km = f.conductor === 'Cu' ? RES_CU[sizeIdx] : RES_AL[sizeIdx];
     const Xc = REACT[sizeIdx];
-    const Vd = voltageDrop(Ib, f.cableLength / 1000, res_per_km, Xc, f.powerFactor, f.phases);
+    // voltage drop per run (each cable carries Ib/numRuns)
+    const Vd = voltageDrop(Ib / numRuns, f.cableLength / 1000, res_per_km, Xc, f.powerFactor, f.phases);
     const VdPct = (Vd / f.voltage) * 100;
     const demandKW = operatingDemand(f.ratedKW, f.quantity, f.demandFactor, f.utilizationFactor);
     const demandKVA = demandKW / f.powerFactor;
     const Istart = Ib * f.startingCurrentMult;
     const earthSz = earthSize(Isc, 0.5, f.insulation);
-    return { Ib, sizeIdx, Iz, In, Vd, VdPct, demandKW, demandKVA, Istart, earthSz, res_per_km };
+    return { Ib, sizeIdx, Iz, In, Vd, VdPct, demandKW, demandKVA, Istart, earthSz, res_per_km, numRuns };
   }), [feeders, Isc]);
 
   // ── Dashboard metrics ──
@@ -360,7 +363,7 @@ export function TransformerDistribution() {
       'Starting Method', 'Starting Current Mult', 'Is Existing (yes/no)',
       'Cable Length (m)', 'Conductor (Cu/Al)', 'Insulation (PVC/XLPE)',
       'Multicore (yes/no)', 'Armoured (yes/no)', 'Install Method',
-      'Num Runs', 'Ambient Temp (°C)', 'Group Size',
+      'Ambient Temp (°C)', 'Group Size',
     ];
     const sample = [
       'F01', 'MDB', 'Air Handling Unit', 1, 22, 400,
@@ -369,7 +372,7 @@ export function TransformerDistribution() {
       'Star-Delta', 6, 'no',
       50, 'Cu', 'XLPE',
       'yes', 'no', 'Tray',
-      1, 35, 1,
+      35, 1,
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
     ws['!cols'] = headers.map(() => ({ wch: 20 }));
@@ -425,7 +428,6 @@ export function TransformerDistribution() {
           multicore:          bool('Multicore (yes/no)'),
           armoured:           bool('Armoured (yes/no)'),
           installMethod:      str('Install Method') || 'Tray',
-          numRuns:            Math.max(1, num('Num Runs', 1)),
           ambientTemp:        num('Ambient Temp (°C)', 35),
           groupSize:          Math.max(1, num('Group Size', 1)),
         };
@@ -686,7 +688,6 @@ export function TransformerDistribution() {
                     options={[{ value: 'XLPE', label: 'XLPE (90°C)' }, { value: 'PVC', label: 'PVC (70°C)' }]} />
                   <FSelect label="Install Method" value={newFeeder.installMethod} onChange={v => setNewFeeder(p => ({ ...p, installMethod: v }))}
                     options={['Tray', 'Conduit', 'Underground', 'Open Air', 'Wall'].map(m => ({ value: m, label: m }))} />
-                  <FInput label="Num. Runs" value={newFeeder.numRuns} onChange={v => setNewFeeder(p => ({ ...p, numRuns: +v }))} min={1} max={6} />
                   <FInput label="Group Size" value={newFeeder.groupSize} onChange={v => setNewFeeder(p => ({ ...p, groupSize: +v }))} min={1} max={6} />
                   <FInput label="Ambient Temp" value={newFeeder.ambientTemp} onChange={v => setNewFeeder(p => ({ ...p, ambientTemp: +v }))} unit="°C" min={20} max={55} />
                   <FInput label="Starting I mult." value={newFeeder.startingCurrentMult} onChange={v => setNewFeeder(p => ({ ...p, startingCurrentMult: +v }))} min={1} max={12} step={0.5} />
@@ -797,7 +798,7 @@ export function TransformerDistribution() {
                         <td style={{ padding: '8px 10px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.description}</td>
                         <td style={{ padding: '8px 10px', fontWeight: 700, color: '#3B82F6' }}>{c.Ib.toFixed(1)}</td>
                         <td style={{ padding: '8px 10px', fontWeight: 700 }}>{SIZES[c.sizeIdx]}</td>
-                        <td style={{ padding: '8px 10px' }}>{f.numRuns}</td>
+                        <td style={{ padding: '8px 10px' }}>{c.numRuns}</td>
                         <td style={{ padding: '8px 10px', color: '#22C55E', fontWeight: 700 }}>{c.Iz.toFixed(1)}</td>
                         <td style={{ padding: '8px 10px' }}>{ct.toFixed(3)}</td>
                         <td style={{ padding: '8px 10px' }}>{cg.toFixed(2)}</td>
@@ -1081,7 +1082,7 @@ export function TransformerDistribution() {
                         <td style={{ padding: '7px 8px' }}>{f.powerFactor}</td>
                         <td style={{ padding: '7px 8px', color: '#3B82F6', fontWeight: 700 }}>{c.Ib.toFixed(1)}</td>
                         <td style={{ padding: '7px 8px', fontWeight: 700 }}>{SIZES[c.sizeIdx]}</td>
-                        <td style={{ padding: '7px 8px' }}>{f.numRuns}</td>
+                        <td style={{ padding: '7px 8px' }}>{c.numRuns}</td>
                         <td style={{ padding: '7px 8px', color: '#22C55E' }}>{c.Iz.toFixed(1)}</td>
                         <td style={{ padding: '7px 8px', fontWeight: 700 }}>{c.In}</td>
                         <td style={{ padding: '7px 8px' }}>{c.Vd.toFixed(2)}</td>
