@@ -9,6 +9,8 @@ import {
 import { useLVPanelStore, FEEDER_INSTALL_STATUSES } from '../../store/useLVPanelStore';
 import type {
   LVPanel, LVFeeder, LVLoad, LVMeter, LVDrawing, LVInspection, LVDocument,
+  LVCalcRecord, LVSwitchingRecord, LVBreakerState,
+  MeteringPriority, EmsStatus, CalcType, VerificationStatus,
 } from '../../store/useLVPanelStore';
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
@@ -1375,76 +1377,224 @@ function FeederCable() {
 // ─── SECTION: Metering & CT ───────────────────────────────────────────────────
 
 const METER_DEFAULTS: Omit<LVMeter, 'id'> = {
-  meterRef: '', panelId: '', meterType: 'Energy Meter', ctRatio: '100/5',
-  accuracy: 'Class 1', serialNumber: '', installationStatus: 'Pending', remarks: '',
+  meterRef: '', panelId: '', feederId: '', equipmentDescription: '',
+  meterRequired: true, meterInstalled: false,
+  manufacturer: '', model: '', meterType: 'Energy Meter',
+  ctRatio: '', ctAccuracyClass: '', ctQuantity: 1,
+  meteringPriority: 'Normal', communicationProtocol: '',
+  emsIntegrationStatus: 'Not Applicable', serialNumber: '',
+  installationStatus: 'Pending', remarks: '', photos: [],
 };
 
 function MeteringCT() {
-  const { meters, addMeter, updateMeter, deleteMeter } = useLVPanelStore();
+  const { meters, panels, addMeter, updateMeter, deleteMeter } = useLVPanelStore();
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<LVMeter, 'id'>>(METER_DEFAULTS);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [filterPanel, setFilterPanel] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const photoRef = useRef<HTMLInputElement>(null);
 
-  const setF = (k: keyof typeof form, v: unknown) => setForm(f => ({ ...f, [k]: v }));
+  const panelIds = [...new Set(panels.map(p => p.panelId))].sort();
+  const visible = meters.filter(m =>
+    (!filterPanel || m.panelId === filterPanel) &&
+    (!filterStatus || m.installationStatus === filterStatus) &&
+    (!filterPriority || m.meteringPriority === filterPriority)
+  );
+
+  const setF = (k: keyof Omit<LVMeter,'id'>, v: unknown) => setForm(f => ({ ...f, [k]: v }));
   const openAdd = () => { setForm(METER_DEFAULTS); setEditId(null); setShowForm(true); };
-  const openEdit = (m: LVMeter) => {
-    const { id, ...rest } = m; setForm(rest); setEditId(id); setShowForm(true);
+  const openEdit = (m: LVMeter) => { const { id, ...rest } = m; setForm(rest); setEditId(id); setShowForm(true); };
+  const save = () => { if (editId) updateMeter(editId, form); else addMeter(form); setShowForm(false); };
+
+  const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = file.size <= 512 * 1024 ? (ev.target?.result as string) : undefined;
+      const photo = { name: file.name, size: file.size, type: file.type, uploadedAt: new Date().toISOString(), dataUrl };
+      setF('photos', [...(form.photos ?? []), photo]);
+    };
+    reader.readAsDataURL(file);
   };
-  const save = () => {
-    if (editId) updateMeter(editId, form); else addMeter(form);
-    setShowForm(false);
+
+  const exportXLSX = () => {
+    const rows = visible.map(m => ({
+      'Meter Ref': m.meterRef, 'Panel ID': m.panelId, 'Feeder ID': m.feederId,
+      'Equipment': m.equipmentDescription, 'Meter Required': m.meterRequired ? 'Yes' : 'No',
+      'Meter Installed': m.meterInstalled ? 'Yes' : 'No',
+      'Manufacturer': m.manufacturer, 'Model': m.model, 'Meter Type': m.meterType,
+      'CT Ratio': m.ctRatio, 'CT Accuracy Class': m.ctAccuracyClass, 'CT Qty': m.ctQuantity,
+      'Priority': m.meteringPriority, 'Comm. Protocol': m.communicationProtocol,
+      'EMS Status': m.emsIntegrationStatus, 'Serial No.': m.serialNumber,
+      'Install Status': m.installationStatus, 'Remarks': m.remarks,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Metering Register');
+    XLSX.writeFile(wb, 'metering_register.xlsx');
   };
+
+  const required = meters.filter(m => m.meterRequired).length;
+  const installed = meters.filter(m => m.meterInstalled).length;
+  const pending = meters.filter(m => m.meterRequired && !m.meterInstalled).length;
+
+  const PRIORITIES: MeteringPriority[] = ['Critical', 'High', 'Normal', 'Low'];
+  const EMS_STATUSES: EmsStatus[] = ['Integrated', 'Planned', 'Not Applicable', 'Pending', 'Not Available'];
+
+  const FormField = ({ lbl, k, type = 'text', opts }: { lbl: string; k: keyof Omit<LVMeter,'id'|'photos'>; type?: string; opts?: string[] }) => (
+    <div>
+      <div style={label}>{lbl}</div>
+      {opts ? (
+        <select value={form[k] as string} onChange={e => setF(k, e.target.value)} style={input()}>
+          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : type === 'checkbox' ? (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form[k] as boolean} onChange={e => setF(k, e.target.checked)} />
+          <span style={{ fontSize: 12, color: 'var(--ec-text-secondary)' }}>Yes</span>
+        </label>
+      ) : (
+        <input type={type} value={form[k] as string | number} onChange={e => setF(k, type === 'number' ? Number(e.target.value) : e.target.value)} style={input()} />
+      )}
+    </div>
+  );
 
   return (
     <div>
-      <SectionHeader title="Metering & CT Details" subtitle="Energy meters, CTs and instrumentation" icon={Gauge} />
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
-        <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Meter</button>
-        <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ec-text-muted)' }}>
-          {meters.filter(m => m.installationStatus !== 'Pending').length} installed / {meters.length} total
+      <SectionHeader title="Metering & CT Details" subtitle="Energy meters, CT details, EMS integration and installation status" icon={Gauge} />
+
+      {/* Summary KPIs */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+        <KpiCard value={meters.length} label="Total Meters" color={ACCENT} icon={Gauge} />
+        <KpiCard value={required} label="Meters Required" color="#8B5CF6" icon={CheckCircle} />
+        <KpiCard value={installed} label="Installed" color="#22C55E" icon={CheckCircle} />
+        <KpiCard value={pending} label="Required but Pending" sub="needs attention" color="#EF4444" icon={AlertCircle} />
+      </div>
+
+      {/* Filters + toolbar */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={filterPanel} onChange={e => setFilterPanel(e.target.value)} style={input({ width: 150 })}>
+          <option value="">All Panels</option>
+          {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+        </select>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={input({ width: 140 })}>
+          <option value="">All Statuses</option>
+          {['Pending','Installed','Calibrated'].map(s => <option key={s}>{s}</option>)}
+        </select>
+        <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} style={input({ width: 130 })}>
+          <option value="">All Priorities</option>
+          {PRIORITIES.map(p => <option key={p}>{p}</option>)}
+        </select>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Meter</button>
+          <button style={btn('#22C55E')} onClick={exportXLSX}><Download style={{ width: 14, height: 14 }} /> Export</button>
         </div>
       </div>
+
+      {/* Form */}
       {showForm && (
         <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{editId ? 'Edit Meter' : 'Add Meter'}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
-            {([['Meter Ref','meterRef'],['Panel ID','panelId'],['Meter Type','meterType'],['CT Ratio','ctRatio'],['Accuracy','accuracy'],['Serial No.','serialNumber'],['Remarks','remarks']] as [string,keyof Omit<LVMeter,'id'>][]).map(([lbl, k]) => (
-              <div key={k}>
-                <div style={label}>{lbl}</div>
-                <input value={form[k] as string} onChange={e => setF(k, e.target.value)} style={input()} />
-              </div>
-            ))}
-            <div>
-              <div style={label}>Status</div>
-              <select value={form.installationStatus} onChange={e => setF('installationStatus', e.target.value)} style={input()}>
-                {['Pending','Installed','Calibrated'].map(o => <option key={o}>{o}</option>)}
-              </select>
+          <div style={{ ...card({ background: '#F59E0B11', border: '1px solid #F59E0B33' }), marginBottom: 12, fontSize: 11, color: 'var(--ec-text-secondary)' }}>
+            <b>Guidance:</b> If CT ratio, model, or manufacturer is unknown, leave blank or enter "Not Available". Do not invent values.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10, marginBottom: 12 }}>
+            <FormField lbl="Meter Ref *" k="meterRef" />
+            <FormField lbl="Panel ID" k="panelId" />
+            <FormField lbl="Feeder ID" k="feederId" />
+            <FormField lbl="Equipment Description" k="equipmentDescription" />
+            <FormField lbl="Meter Type" k="meterType" opts={['Energy Meter','Multi-function Meter','kWh Meter','MDI Meter','Smart Meter','Billing Meter','Sub-meter','Other']} />
+            <FormField lbl="Meter Required" k="meterRequired" type="checkbox" />
+            <FormField lbl="Meter Installed" k="meterInstalled" type="checkbox" />
+            <FormField lbl="Manufacturer" k="manufacturer" />
+            <FormField lbl="Model" k="model" />
+            <FormField lbl="Serial No." k="serialNumber" />
+            <FormField lbl="CT Ratio" k="ctRatio" />
+            <FormField lbl="CT Accuracy Class" k="ctAccuracyClass" opts={['Class 0.2','Class 0.5','Class 1','Class 2','Class 3','Class 5','Not Available','']} />
+            <FormField lbl="CT Quantity" k="ctQuantity" type="number" />
+            <FormField lbl="Priority" k="meteringPriority" opts={PRIORITIES} />
+            <FormField lbl="Comm. Protocol" k="communicationProtocol" opts={['Modbus RTU','Modbus TCP','BACnet','DLMS/COSEM','MBus','PROFIBUS','Not Applicable','Not Available','']} />
+            <FormField lbl="EMS Status" k="emsIntegrationStatus" opts={EMS_STATUSES} />
+            <FormField lbl="Install Status" k="installationStatus" opts={['Pending','Installed','Calibrated']} />
+            <div style={{ gridColumn: 'span 2' }}>
+              <div style={label}>Remarks</div>
+              <input value={form.remarks} onChange={e => setF('remarks', e.target.value)} style={input()} />
             </div>
           </div>
+
+          {/* Photo upload */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={label}>Installation Photos</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button style={btn('#475569')} onClick={() => photoRef.current?.click()}>
+                <Upload style={{ width: 13, height: 13 }} /> Add Photo
+              </button>
+              <input ref={photoRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
+              <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Images ≤ 500 KB are stored with preview. Larger files: name only.</span>
+            </div>
+            {form.photos && form.photos.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                {form.photos.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    {p.dataUrl
+                      ? <img src={p.dataUrl} alt={p.name} style={{ width: 80, height: 60, objectFit: 'cover', borderRadius: 6 }} />
+                      : <div style={{ width: 80, height: 60, background: 'var(--ec-bg-surface)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--ec-text-muted)' }}>📎 {p.name.slice(0, 10)}</div>
+                    }
+                    <button style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 10 }}
+                      onClick={() => setF('photos', form.photos.filter((_, j) => j !== i))}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={btn(ACCENT)} onClick={save}><CheckCircle style={{ width: 13, height: 13 }} /> Save</button>
             <button style={btn('#475569')} onClick={() => setShowForm(false)}>Cancel</button>
           </div>
         </div>
       )}
-      {meters.length === 0
-        ? <EmptyState icon={Gauge} title="No meters" sub="Add meters for energy monitoring." />
+
+      {/* Table */}
+      {visible.length === 0
+        ? <EmptyState icon={Gauge} title="No meters" sub='Click "Add Meter" to start building the metering register.' />
         : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>{['Meter Ref','Panel','Type','CT Ratio','Accuracy','Serial No.','Status','Remarks','Actions'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr>
+                  {['Meter Ref','Panel','Feeder','Equipment','Reqd','Installed','Manufacturer','Model','Type','CT Ratio','CT Class','CT Qty','Priority','Comm.','EMS','Serial No.','Status','Remarks','Actions'].map(h => (
+                    <th key={h} style={TH}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
-                {meters.map((m, i) => (
+                {visible.map((m, i) => (
                   <tr key={m.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                    <td style={td({ color: ACCENT, fontWeight: 700 })}>{m.meterRef}</td>
-                    <td style={td()}>{m.panelId}</td>
-                    <td style={td()}>{m.meterType}</td>
-                    <td style={td()}>{m.ctRatio}</td>
-                    <td style={td()}>{m.accuracy}</td>
-                    <td style={td()}>{m.serialNumber}</td>
+                    <td style={td({ color: ACCENT, fontWeight: 700, whiteSpace: 'nowrap' })}>{m.meterRef}</td>
+                    <td style={td({ fontWeight: 600 })}>{m.panelId}</td>
+                    <td style={td()}>{m.feederId}</td>
+                    <td style={td({ minWidth: 120 })}>{m.equipmentDescription}</td>
+                    <td style={td({ textAlign: 'center' })}>{m.meterRequired ? <span style={{ color: '#22C55E' }}>✓</span> : <span style={{ color: '#64748B' }}>—</span>}</td>
+                    <td style={td({ textAlign: 'center' })}>{m.meterInstalled ? <span style={{ color: '#22C55E' }}>✓</span> : <span style={{ color: '#EF4444' }}>✗</span>}</td>
+                    <td style={td()}>{m.manufacturer || <span style={{ color: 'var(--ec-text-muted)', fontStyle: 'italic' }}>—</span>}</td>
+                    <td style={td()}>{m.model || <span style={{ color: 'var(--ec-text-muted)', fontStyle: 'italic' }}>—</span>}</td>
+                    <td style={td({ whiteSpace: 'nowrap' })}>{m.meterType}</td>
+                    <td style={td()}>{m.ctRatio || '—'}</td>
+                    <td style={td()}>{m.ctAccuracyClass || '—'}</td>
+                    <td style={td({ textAlign: 'center' })}>{m.ctQuantity}</td>
+                    <td style={td()}>
+                      <span style={{ color: m.meteringPriority === 'Critical' ? '#EF4444' : m.meteringPriority === 'High' ? '#F59E0B' : 'var(--ec-text-secondary)', fontWeight: 600 }}>
+                        {m.meteringPriority}
+                      </span>
+                    </td>
+                    <td style={td()}>{m.communicationProtocol || '—'}</td>
+                    <td style={td()}><StatusBadge status={m.emsIntegrationStatus} /></td>
+                    <td style={td()}>{m.serialNumber || '—'}</td>
                     <td style={td()}><StatusBadge status={m.installationStatus} /></td>
-                    <td style={td()}>{m.remarks}</td>
+                    <td style={td({ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{m.remarks}</td>
                     <td style={td()}>
                       <div style={{ display: 'flex', gap: 4 }}>
                         <button onClick={() => openEdit(m)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
@@ -1471,75 +1621,324 @@ function MeteringCT() {
 // ─── SECTION: Load Summary ────────────────────────────────────────────────────
 
 function LoadSummary() {
-  const { panels, loads } = useLVPanelStore();
+  const { panels, loads, calcs, addCalc, updateCalc, deleteCalc } = useLVPanelStore();
+  const [activeTab, setActiveTab] = useState<'tables' | 'calcs'>('tables');
+  const [showCalcForm, setShowCalcForm] = useState(false);
+  const [editCalcId, setEditCalcId] = useState<string | null>(null);
+  const [calcForm, setCalcForm] = useState<Omit<LVCalcRecord, 'id' | 'createdAt'>>({
+    calcType: 'MaxDemand', panelId: '', feederRef: '', description: '',
+    inputs: [{ param: '', value: '', unit: '' }],
+    method: '', formula: '', result: '', unit: 'kW',
+    sourceWorksheet: '', verificationStatus: 'Unverified', verifiedBy: '', notes: '',
+  });
+  const [filterCalcPanel, setFilterCalcPanel] = useState('');
+  const [filterCalcType, setFilterCalcType] = useState('');
+  const [confirmDelCalc, setConfirmDelCalc] = useState<string | null>(null);
+  const [expandedCalc, setExpandedCalc] = useState<string | null>(null);
+
+  const panelIds = [...new Set(panels.map(p => p.panelId))].sort();
 
   const byPanel = panels.map(p => {
     const pl = loads.filter(l => l.panelId === p.panelId);
     const connKW = pl.reduce((s, l) => s + l.ratedKW * l.quantity, 0);
     const demKW = pl.reduce((s, l) => s + l.ratedKW * l.demandFactor * l.quantity, 0);
-    return { panelId: p.panelId, name: p.panelName, area: p.electricalArea, circuits: pl.length, connKW, demKW };
-  }).filter(r => r.circuits > 0 || panels.length > 0);
+    return { panelId: p.panelId, name: p.panelName, area: p.electricalArea, type: p.panelType, circuits: pl.length, connKW, demKW };
+  });
 
   const areas = [...new Set(loads.map(l => l.area).filter(Boolean))];
   const byArea = areas.map(area => {
     const al = loads.filter(l => l.area === area);
-    return {
-      area, circuits: al.length,
-      connKW: al.reduce((s, l) => s + l.ratedKW * l.quantity, 0),
-      demKW: al.reduce((s, l) => s + l.ratedKW * l.demandFactor * l.quantity, 0),
-    };
+    return { area, circuits: al.length, connKW: al.reduce((s, l) => s + l.ratedKW * l.quantity, 0), demKW: al.reduce((s, l) => s + l.ratedKW * l.demandFactor * l.quantity, 0) };
+  });
+
+  const cats = [...new Set(loads.map(l => l.loadCategory).filter(Boolean))];
+  const byCategory = cats.map(cat => {
+    const cl = loads.filter(l => l.loadCategory === cat);
+    return { category: cat, circuits: cl.length, connKW: cl.reduce((s, l) => s + l.ratedKW * l.quantity, 0), demKW: cl.reduce((s, l) => s + l.ratedKW * l.demandFactor * l.quantity, 0) };
   });
 
   const grandKW = loads.reduce((s, l) => s + l.ratedKW * l.quantity, 0);
   const grandDem = loads.reduce((s, l) => s + l.ratedKW * l.demandFactor * l.quantity, 0);
 
+  const CALC_TYPES: CalcType[] = ['Current', 'VoltageDrop', 'MaxDemand', 'PowerFactor', 'Other'];
+  const VS: VerificationStatus[] = ['Unverified', 'Engineer Reviewed', 'Approved'];
+
+  const visibleCalcs = calcs.filter(c =>
+    (!filterCalcPanel || c.panelId === filterCalcPanel) &&
+    (!filterCalcType || c.calcType === filterCalcType)
+  );
+
+  const setCalcF = (k: keyof Omit<LVCalcRecord, 'id' | 'createdAt'>, v: unknown) => setCalcForm(f => ({ ...f, [k]: v }));
+  const openAddCalc = () => {
+    setCalcForm({ calcType: 'MaxDemand', panelId: '', feederRef: '', description: '', inputs: [{ param: '', value: '', unit: '' }], method: '', formula: '', result: '', unit: 'kW', sourceWorksheet: '', verificationStatus: 'Unverified', verifiedBy: '', notes: '' });
+    setEditCalcId(null); setShowCalcForm(true);
+  };
+  const openEditCalc = (c: LVCalcRecord) => { const { id, createdAt, ...rest } = c; setCalcForm(rest); setEditCalcId(id); setShowCalcForm(true); };
+  const saveCalc = () => { if (editCalcId) updateCalc(editCalcId, calcForm); else addCalc(calcForm); setShowCalcForm(false); };
+
+  const addInput = () => setCalcF('inputs', [...calcForm.inputs, { param: '', value: '', unit: '' }]);
+  const removeInput = (i: number) => setCalcF('inputs', calcForm.inputs.filter((_, j) => j !== i));
+  const setInput = (i: number, k: 'param' | 'value' | 'unit', v: string) =>
+    setCalcF('inputs', calcForm.inputs.map((inp, j) => j === i ? { ...inp, [k]: v } : inp));
+
+  const exportCalcs = () => {
+    const rows = visibleCalcs.map(c => ({ 'Description': c.description, 'Type': c.calcType, 'Panel': c.panelId, 'Feeder': c.feederRef, 'Method': c.method, 'Formula': c.formula, 'Result': c.result, 'Unit': c.unit, 'Source': c.sourceWorksheet, 'Verification': c.verificationStatus, 'Verified By': c.verifiedBy, 'Notes': c.notes }));
+    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Engineering Calcs'); XLSX.writeFile(wb, 'engineering_calcs.xlsx');
+  };
+
+  const vsColor = (v: VerificationStatus) => v === 'Approved' ? '#22C55E' : v === 'Engineer Reviewed' ? '#0EA5E9' : '#F59E0B';
+
   return (
     <div>
-      <SectionHeader title="Load Summary" subtitle="Aggregated totals by panel and area" icon={BarChart3} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <div style={card()}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By Panel</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>{['Panel','Area','Circuits','Connected kW','Demand kW'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-            <tbody>
-              {byPanel.map((r, i) => (
-                <tr key={r.panelId} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                  <td style={td({ color: ACCENT, fontWeight: 700 })}>{r.panelId}</td>
-                  <td style={td()}>{r.area}</td>
-                  <td style={td()}>{r.circuits}</td>
-                  <td style={td()}>{r.connKW.toFixed(1)}</td>
-                  <td style={td()}>{r.demKW.toFixed(1)}</td>
-                </tr>
-              ))}
-              <tr style={{ background: 'var(--ec-bg-surface)', fontWeight: 700 }}>
-                <td style={td({ fontWeight: 700 })} colSpan={3}>Grand Total</td>
-                <td style={td({ fontWeight: 700, color: ACCENT })}>{grandKW.toFixed(1)}</td>
-                <td style={td({ fontWeight: 700, color: ACCENT })}>{grandDem.toFixed(1)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div style={card()}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By Area</div>
-          {byArea.length === 0
-            ? <EmptyState icon={BarChart3} title="No area data" sub="Add area to load items." />
-            : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr>{['Area','Circuits','Connected kW','Demand kW'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {byArea.map((r, i) => (
-                    <tr key={r.area} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                      <td style={td()}>{r.area}</td>
-                      <td style={td()}>{r.circuits}</td>
-                      <td style={td()}>{r.connKW.toFixed(1)}</td>
-                      <td style={td()}>{r.demKW.toFixed(1)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-        </div>
+      <SectionHeader title="Load Summary & Engineering Calculations" subtitle="Aggregated load tables and engineering calculation ledger" icon={BarChart3} />
+
+      <div style={{ ...card({ background: '#F59E0B11', border: '1px solid #F59E0B33' }), marginBottom: 16, fontSize: 11, color: 'var(--ec-text-secondary)', lineHeight: 1.7 }}>
+        <div style={{ fontWeight: 700, color: '#F59E0B', marginBottom: 6 }}>Engineering Calculation Principles</div>
+        <ol style={{ margin: 0, paddingLeft: 20 }}>
+          <li><b>Connected Load ≠ Maximum Demand.</b> Max Demand = Total Connected × Demand Factor. Load Factor is an operational characteristic, not a demand reducer.</li>
+          <li><b>Current requires:</b> Voltage, Power Factor, Phases, and Efficiency (motors). Missing inputs are flagged — never assumed.</li>
+          <li><b>Line vs. phase voltage:</b> For 3φ, V_phase = V_line ÷ √3. State which is used in each calculation.</li>
+          <li><b>Original cable size and breaker rating are preserved.</b> No auto-replacement based on calculated load.</li>
+          <li><b>Missing/unverified inputs are identified explicitly.</b> Original design values are never overwritten by recalculation.</li>
+        </ol>
       </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '2px solid var(--ec-border)', paddingBottom: 0 }}>
+        {(['tables', 'calcs'] as const).map(t => (
+          <button key={t} onClick={() => setActiveTab(t)} style={{ padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: 'none', color: activeTab === t ? ACCENT : 'var(--ec-text-muted)', borderBottom: `2px solid ${activeTab === t ? ACCENT : 'transparent'}`, marginBottom: -2 }}>
+            {t === 'tables' ? 'Load Summary Tables' : 'Engineering Calc Ledger'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'tables' && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+            <KpiCard value={loads.length} label="Total Circuits" color={ACCENT} icon={BarChart3} />
+            <KpiCard value={`${grandKW.toFixed(1)} kW`} label="Total Connected Load" color="#8B5CF6" icon={BarChart3} />
+            <KpiCard value={`${grandDem.toFixed(1)} kW`} label="Total Maximum Demand" color="#22C55E" icon={BarChart3} />
+            <KpiCard value={grandKW > 0 ? `${(grandDem / grandKW * 100).toFixed(1)}%` : '—'} label="Overall Demand Factor" color="#F59E0B" icon={BarChart3} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <div style={card()}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By Panel / Board</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>{['Panel ID','Type','Area','Circuits','Connected kW','Max Demand kW'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {byPanel.filter(r => r.circuits > 0).map((r, i) => (
+                      <tr key={r.panelId} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                        <td style={td({ color: ACCENT, fontWeight: 700 })}>{r.panelId}</td>
+                        <td style={td()}>{r.type}</td>
+                        <td style={td()}>{r.area}</td>
+                        <td style={td()}>{r.circuits}</td>
+                        <td style={td()}>{r.connKW.toFixed(2)}</td>
+                        <td style={td({ fontWeight: 600 })}>{r.demKW.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                    {byPanel.filter(r => r.circuits > 0).length === 0 && <tr><td colSpan={6} style={td({ textAlign: 'center', color: 'var(--ec-text-muted)' })}>No loads entered</td></tr>}
+                    <tr style={{ fontWeight: 700 }}>
+                      <td style={td({ fontWeight: 700 })} colSpan={4}>Grand Total</td>
+                      <td style={td({ fontWeight: 700, color: ACCENT })}>{grandKW.toFixed(2)}</td>
+                      <td style={td({ fontWeight: 700, color: '#22C55E' })}>{grandDem.toFixed(2)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div style={card()}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By Area / Zone</div>
+              {byArea.length === 0
+                ? <EmptyState icon={BarChart3} title="No area data" sub="Add area field to load items." />
+                : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead><tr>{['Area','Circuits','Connected kW','Max Demand kW'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {byArea.map((r, i) => (
+                          <tr key={r.area} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                            <td style={td()}>{r.area}</td>
+                            <td style={td()}>{r.circuits}</td>
+                            <td style={td()}>{r.connKW.toFixed(2)}</td>
+                            <td style={td({ fontWeight: 600 })}>{r.demKW.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+            </div>
+          </div>
+          <div style={card()}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>By Load Category</div>
+            {byCategory.length === 0
+              ? <EmptyState icon={BarChart3} title="No category data" sub="Add load category in the Load Schedule section." />
+              : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr>{['Category','Circuits','Connected kW','Max Demand kW','% of Total Demand'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {byCategory.map((r, i) => (
+                        <tr key={r.category} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                          <td style={td()}>{r.category}</td>
+                          <td style={td()}>{r.circuits}</td>
+                          <td style={td()}>{r.connKW.toFixed(2)}</td>
+                          <td style={td({ fontWeight: 600 })}>{r.demKW.toFixed(2)}</td>
+                          <td style={td()}>{grandDem > 0 ? `${(r.demKW / grandDem * 100).toFixed(1)}%` : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'calcs' && (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={filterCalcPanel} onChange={e => setFilterCalcPanel(e.target.value)} style={input({ width: 150 })}>
+              <option value="">All Panels</option>
+              {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+            </select>
+            <select value={filterCalcType} onChange={e => setFilterCalcType(e.target.value)} style={input({ width: 140 })}>
+              <option value="">All Types</option>
+              {CALC_TYPES.map(t => <option key={t}>{t}</option>)}
+            </select>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <button style={btn(ACCENT)} onClick={openAddCalc}><Plus style={{ width: 14, height: 14 }} /> Add Calc</button>
+              {visibleCalcs.length > 0 && <button style={btn('#22C55E')} onClick={exportCalcs}><Download style={{ width: 14, height: 14 }} /> Export</button>}
+            </div>
+          </div>
+
+          {showCalcForm && (
+            <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{editCalcId ? 'Edit Calculation' : 'Add Calculation'}</div>
+              <div style={{ ...card({ background: '#F59E0B11', border: '1px solid #F59E0B33' }), marginBottom: 12, fontSize: 11, color: 'var(--ec-text-secondary)' }}>
+                Record inputs, method and result. Results do not overwrite original design values. Identify missing inputs explicitly — do not assume defaults.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
+                <div>
+                  <div style={label}>Calc Type</div>
+                  <select value={calcForm.calcType} onChange={e => setCalcF('calcType', e.target.value as CalcType)} style={input()}>
+                    {CALC_TYPES.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={label}>Panel ID</div>
+                  <select value={calcForm.panelId} onChange={e => setCalcF('panelId', e.target.value)} style={input()}>
+                    <option value="">— Select —</option>
+                    {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+                  </select>
+                </div>
+                <div><div style={label}>Feeder Ref</div><input value={calcForm.feederRef} onChange={e => setCalcF('feederRef', e.target.value)} style={input()} /></div>
+                <div><div style={label}>Description</div><input value={calcForm.description} onChange={e => setCalcF('description', e.target.value)} style={input()} /></div>
+                <div><div style={label}>Method / Standard</div><input value={calcForm.method} onChange={e => setCalcF('method', e.target.value)} style={input()} placeholder="e.g. IEC 60364" /></div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <div style={label}>Formula</div>
+                  <input value={calcForm.formula} onChange={e => setCalcF('formula', e.target.value)} style={input()} placeholder="e.g. I = P / (√3 × V × PF)" />
+                </div>
+                <div>
+                  <div style={label}>Result + Unit</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input value={calcForm.result} onChange={e => setCalcF('result', e.target.value)} style={input()} placeholder="125.4" />
+                    <input value={calcForm.unit} onChange={e => setCalcF('unit', e.target.value)} style={input({ width: 70 })} placeholder="kW" />
+                  </div>
+                </div>
+                <div><div style={label}>Source Worksheet</div><input value={calcForm.sourceWorksheet} onChange={e => setCalcF('sourceWorksheet', e.target.value)} style={input()} /></div>
+                <div>
+                  <div style={label}>Verification Status</div>
+                  <select value={calcForm.verificationStatus} onChange={e => setCalcF('verificationStatus', e.target.value as VerificationStatus)} style={input()}>
+                    {VS.map(v => <option key={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div><div style={label}>Verified By</div><input value={calcForm.verifiedBy} onChange={e => setCalcF('verifiedBy', e.target.value)} style={input()} /></div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <div style={label}>Notes / Assumptions / Missing Inputs</div>
+                  <input value={calcForm.notes} onChange={e => setCalcF('notes', e.target.value)} style={input()} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={label}>Input Parameters</div>
+                  <button style={btn(ACCENT, { padding: '4px 10px', fontSize: 11 })} onClick={addInput}><Plus style={{ width: 11, height: 11 }} /> Add Row</button>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>{['Parameter','Value','Unit',''].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {calcForm.inputs.map((inp, i) => (
+                      <tr key={i}>
+                        <td style={td()}><input value={inp.param} onChange={e => setInput(i, 'param', e.target.value)} style={input()} placeholder="e.g. Voltage (V_L)" /></td>
+                        <td style={td()}><input value={inp.value} onChange={e => setInput(i, 'value', e.target.value)} style={input()} placeholder="400" /></td>
+                        <td style={td()}><input value={inp.unit} onChange={e => setInput(i, 'unit', e.target.value)} style={input()} placeholder="V, A, kW…" /></td>
+                        <td style={td()}><button onClick={() => removeInput(i)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button style={btn(ACCENT)} onClick={saveCalc}><CheckCircle style={{ width: 13, height: 13 }} /> Save</button>
+                <button style={btn('#475569')} onClick={() => setShowCalcForm(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {visibleCalcs.length === 0
+            ? <EmptyState icon={BarChart3} title="No calculations" sub='Click "Add Calc" to record a verified engineering calculation.' />
+            : visibleCalcs.map((c, i) => (
+              <div key={c.id} style={{ ...card(), marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT }}>{c.description || `Calc #${i + 1}`}</span>
+                  <StatusBadge status={c.calcType} />
+                  {c.panelId && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>{c.panelId}</span>}
+                  {c.feederRef && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>/ {c.feederRef}</span>}
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: vsColor(c.verificationStatus) }}>{c.verificationStatus}</span>
+                    <button onClick={() => setExpandedCalc(expandedCalc === c.id ? null : c.id)} style={btn('#475569', { padding: '4px 8px' })}>
+                      {expandedCalc === c.id ? <ChevronDown style={{ width: 11, height: 11 }} /> : <ChevronRight style={{ width: 11, height: 11 }} />}
+                    </button>
+                    <button onClick={() => openEditCalc(c)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
+                    {confirmDelCalc === c.id ? (
+                      <><button onClick={() => { deleteCalc(c.id); setConfirmDelCalc(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button><button onClick={() => setConfirmDelCalc(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button></>
+                    ) : (
+                      <button onClick={() => setConfirmDelCalc(c.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
+                    )}
+                  </span>
+                </div>
+                {expandedCalc === c.id && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--ec-border)', fontSize: 11, color: 'var(--ec-text-secondary)' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, marginBottom: 6 }}>Inputs</div>
+                      {c.inputs.length > 0 ? (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead><tr>{['Parameter','Value','Unit'].map(h => <th key={h} style={{ ...TH, fontSize: 10 }}>{h}</th>)}</tr></thead>
+                          <tbody>{c.inputs.map((inp, j) => (
+                            <tr key={j} style={{ background: j % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                              <td style={td({ fontSize: 11 })}>{inp.param}</td>
+                              <td style={td({ fontSize: 11 })}>{inp.value}</td>
+                              <td style={td({ fontSize: 11 })}>{inp.unit}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      ) : <div style={{ color: 'var(--ec-text-muted)' }}>No inputs recorded</div>}
+                    </div>
+                    <div style={{ lineHeight: 1.8 }}>
+                      {c.method && <div><b>Method:</b> {c.method}</div>}
+                      {c.formula && <div><b>Formula:</b> <code style={{ background: 'var(--ec-bg-surface)', padding: '2px 6px', borderRadius: 4 }}>{c.formula}</code></div>}
+                      <div><b>Result:</b> <span style={{ color: ACCENT, fontWeight: 700 }}>{c.result || '—'} {c.unit}</span></div>
+                      {c.sourceWorksheet && <div><b>Source:</b> {c.sourceWorksheet}</div>}
+                      {c.verifiedBy && <div><b>Verified by:</b> {c.verifiedBy}</div>}
+                      {c.notes && <div><b>Notes:</b> {c.notes}</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+        </>
+      )}
     </div>
   );
 }
@@ -1547,53 +1946,139 @@ function LoadSummary() {
 // ─── SECTION: Drawings ────────────────────────────────────────────────────────
 
 const DRAWING_DEFAULTS: Omit<LVDrawing, 'id'> = {
-  drawingNo: '', title: '', discipline: 'Electrical', revision: 'Rev.0',
-  date: new Date().toISOString().slice(0, 10),
-  status: 'Draft', relatedPanels: '', remarks: '',
+  drawingNo: '', title: '', category: 'Single Line Diagram', discipline: 'Electrical',
+  associatedPanel: '', revision: 'Rev.0', date: new Date().toISOString().slice(0, 10),
+  status: 'Draft', approvalStatus: 'Pending', fileRef: '', fileDataUrl: undefined,
+  revisionHistory: [], remarks: '',
 };
 
+const DRAWING_CATEGORIES = ['Single Line Diagram','Layout Drawing','Schematic','Wiring Diagram','Cable Route','Panel GA','Load Schedule','As-Built','Other'];
+
 function Drawings() {
-  const { drawings, addDrawing, updateDrawing, deleteDrawing } = useLVPanelStore();
+  const { drawings, panels, addDrawing, updateDrawing, deleteDrawing } = useLVPanelStore();
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<Omit<LVDrawing, 'id'>>(DRAWING_DEFAULTS);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterCat, setFilterCat] = useState('');
+  const [expandedRev, setExpandedRev] = useState<string | null>(null);
+  const [showRevForm, setShowRevForm] = useState<string | null>(null);
+  const [revForm, setRevForm] = useState({ rev: '', date: '', description: '', author: '' });
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const setF = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const panelIds = [...new Set(panels.map(p => p.panelId))].sort();
+  const statusOptions: LVDrawing['status'][] = ['Draft','Issued for Approval','Issued for Construction','As-Built'];
+  const approvalOptions: LVDrawing['approvalStatus'][] = ['Pending','Approved','Rejected','Not Required'];
+
+  const visible = drawings.filter(d =>
+    (!filterStatus || d.status === filterStatus) &&
+    (!filterCat || d.category === filterCat)
+  );
+
+  const setF = (k: keyof Omit<LVDrawing, 'id'>, v: unknown) => setForm(f => ({ ...f, [k]: v }));
   const openAdd = () => { setForm(DRAWING_DEFAULTS); setEditId(null); setShowForm(true); };
-  const openEdit = (d: LVDrawing) => {
-    const { id, ...rest } = d; setForm(rest); setEditId(id); setShowForm(true);
-  };
-  const save = () => {
-    if (editId) updateDrawing(editId, form); else addDrawing(form);
-    setShowForm(false);
+  const openEdit = (d: LVDrawing) => { const { id, ...rest } = d; setForm(rest); setEditId(id); setShowForm(true); };
+  const save = () => { if (editId) updateDrawing(editId, form); else addDrawing(form); setShowForm(false); };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setF('fileRef', file.name);
+    if (file.size <= 512 * 1024) {
+      const reader = new FileReader();
+      reader.onload = ev => setF('fileDataUrl', ev.target?.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setF('fileDataUrl', undefined);
+    }
   };
 
-  const statusOptions = ['Draft','Issued for Approval','Issued for Construction','As-Built'];
+  const addRevision = (drawingId: string) => {
+    const d = drawings.find(x => x.id === drawingId); if (!d) return;
+    const rev = { ...revForm, date: revForm.date || new Date().toISOString().slice(0, 10) };
+    updateDrawing(drawingId, { revisionHistory: [...(d.revisionHistory ?? []), rev] });
+    setShowRevForm(null); setRevForm({ rev: '', date: '', description: '', author: '' });
+  };
+
+  const exportXLSX = () => {
+    const rows = visible.map(d => ({ 'Drawing No': d.drawingNo, 'Title': d.title, 'Category': d.category, 'Discipline': d.discipline, 'Associated Panel': d.associatedPanel, 'Revision': d.revision, 'Date': d.date, 'Status': d.status, 'Approval Status': d.approvalStatus, 'File Ref': d.fileRef, 'Remarks': d.remarks }));
+    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Drawing Register'); XLSX.writeFile(wb, 'drawing_register.xlsx');
+  };
 
   return (
     <div>
-      <SectionHeader title="Electrical Drawings Register" subtitle="Drawing list, revisions and status tracking" icon={BookOpen} />
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-        <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Drawing</button>
-        <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ec-text-muted)' }}>{drawings.length} drawings</div>
+      <SectionHeader title="Electrical Drawing Register" subtitle="Drawing register, revisions, approval status and file attachments" icon={BookOpen} />
+
+      <div style={{ ...card({ background: '#3B82F611', border: '1px solid #3B82F633' }), marginBottom: 14, fontSize: 11, color: 'var(--ec-text-secondary)' }}>
+        <b>Note:</b> Where an Excel workbook contains only a drawing reference, import the number and title only — do not attach a fictitious file. Upload actual drawing files when available. Files ≤ 500 KB are stored with inline preview; larger files store the filename reference only.
       </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={input({ width: 180 })}>
+          <option value="">All Statuses</option>
+          {statusOptions.map(s => <option key={s}>{s}</option>)}
+        </select>
+        <select value={filterCat} onChange={e => setFilterCat(e.target.value)} style={input({ width: 180 })}>
+          <option value="">All Categories</option>
+          {DRAWING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Drawing</button>
+          {visible.length > 0 && <button style={btn('#22C55E')} onClick={exportXLSX}><Download style={{ width: 14, height: 14 }} /> Export</button>}
+        </div>
+      </div>
+
       {showForm && (
         <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{editId ? 'Edit Drawing' : 'Add Drawing'}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
-            {(['drawingNo','title','discipline','revision','date','relatedPanels','remarks'] as const).map(k => (
-              <div key={k}>
-                <div style={label}>{k.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}</div>
-                <input value={form[k]} onChange={e => setF(k, e.target.value)} style={input()} type={k === 'date' ? 'date' : 'text'} />
-              </div>
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10, marginBottom: 12 }}>
+            <div><div style={label}>Drawing No *</div><input value={form.drawingNo} onChange={e => setF('drawingNo', e.target.value)} style={input()} /></div>
+            <div style={{ gridColumn: 'span 2' }}><div style={label}>Title</div><input value={form.title} onChange={e => setF('title', e.target.value)} style={input()} /></div>
             <div>
-              <div style={label}>Status</div>
-              <select value={form.status} onChange={e => setF('status', e.target.value as LVDrawing['status'])} style={input()}>
-                {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+              <div style={label}>Category</div>
+              <select value={form.category} onChange={e => setF('category', e.target.value)} style={input()}>
+                {DRAWING_CATEGORIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
+            <div><div style={label}>Discipline</div><input value={form.discipline} onChange={e => setF('discipline', e.target.value)} style={input()} /></div>
+            <div>
+              <div style={label}>Associated Panel</div>
+              <select value={form.associatedPanel} onChange={e => setF('associatedPanel', e.target.value)} style={input()}>
+                <option value="">— None —</option>
+                {panelIds.map(id => <option key={id} value={id}>{id}</option>)}
+              </select>
+            </div>
+            <div><div style={label}>Revision</div><input value={form.revision} onChange={e => setF('revision', e.target.value)} style={input()} /></div>
+            <div><div style={label}>Date</div><input type="date" value={form.date} onChange={e => setF('date', e.target.value)} style={input()} /></div>
+            <div>
+              <div style={label}>Doc. Status</div>
+              <select value={form.status} onChange={e => setF('status', e.target.value as LVDrawing['status'])} style={input()}>
+                {statusOptions.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={label}>Approval Status</div>
+              <select value={form.approvalStatus} onChange={e => setF('approvalStatus', e.target.value as LVDrawing['approvalStatus'])} style={input()}>
+                {approvalOptions.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: 'span 2' }}><div style={label}>Remarks</div><input value={form.remarks} onChange={e => setF('remarks', e.target.value)} style={input()} /></div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={label}>Drawing File (PDF, Image, Excel)</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button style={btn('#475569')} onClick={() => fileRef.current?.click()}><Upload style={{ width: 13, height: 13 }} /> Upload File</button>
+              <input ref={fileRef} type="file" accept=".pdf,.xls,.xlsx,.png,.jpg,.jpeg,.dwg" onChange={handleFile} style={{ display: 'none' }} />
+              {form.fileRef && <span style={{ fontSize: 12, color: '#22C55E' }}>📎 {form.fileRef}</span>}
+              {form.fileRef && <button style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 11 }} onClick={() => { setF('fileRef', ''); setF('fileDataUrl', undefined); }}>Remove</button>}
+            </div>
+            {form.fileDataUrl && (form.fileDataUrl as string).startsWith('data:image') && (
+              <img src={form.fileDataUrl as string} alt="preview" style={{ maxHeight: 100, maxWidth: 250, marginTop: 8, borderRadius: 6, objectFit: 'contain' }} />
+            )}
+            {form.fileRef && !form.fileDataUrl && (
+              <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginTop: 4 }}>File too large for inline storage — reference stored: {form.fileRef}</div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={btn(ACCENT)} onClick={save}><CheckCircle style={{ width: 13, height: 13 }} /> Save</button>
@@ -1601,77 +2086,139 @@ function Drawings() {
           </div>
         </div>
       )}
-      {drawings.length === 0
-        ? <EmptyState icon={BookOpen} title="No drawings" sub="Add drawings to track your electrical drawing register." />
+
+      {visible.length === 0
+        ? <EmptyState icon={BookOpen} title="No drawings" sub='Add drawings to build the register. Import drawing references without attaching fictitious files.' />
         : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr>{['Drawing No','Title','Discipline','Rev','Date','Status','Related Panels','Remarks','Actions'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
-              <tbody>
-                {drawings.map((d, i) => (
-                  <tr key={d.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                    <td style={td({ color: ACCENT, fontWeight: 700 })}>{d.drawingNo}</td>
-                    <td style={td()}>{d.title}</td>
-                    <td style={td()}>{d.discipline}</td>
-                    <td style={td()}>{d.revision}</td>
-                    <td style={td()}>{d.date}</td>
-                    <td style={td()}><StatusBadge status={d.status} /></td>
-                    <td style={td()}>{d.relatedPanels}</td>
-                    <td style={td()}>{d.remarks}</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button onClick={() => openEdit(d)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
-                        {confirmDel === d.id ? (
-                          <>
-                            <button onClick={() => { deleteDrawing(d.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button>
-                            <button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button>
-                          </>
-                        ) : (
-                          <button onClick={() => setConfirmDel(d.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
-                        )}
+          <div>
+            {visible.map((d) => (
+              <div key={d.id} style={{ ...card(), marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: ACCENT }}>{d.drawingNo}</span>
+                      <StatusBadge status={d.status} />
+                      <StatusBadge status={d.approvalStatus} />
+                      {d.associatedPanel && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Panel: {d.associatedPanel}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--ec-text-primary)', marginBottom: 4 }}>{d.title}</div>
+                    <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--ec-text-muted)', flexWrap: 'wrap' }}>
+                      <span>{d.category}</span><span>{d.discipline}</span>
+                      <span>Rev: {d.revision}</span>{d.date && <span>{d.date}</span>}
+                      {d.fileRef ? <span style={{ color: '#22C55E' }}>📎 {d.fileRef}</span> : <span style={{ color: '#F59E0B' }}>No file attached</span>}
+                    </div>
+                    {d.remarks && <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginTop: 4 }}>{d.remarks}</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+                    {d.fileDataUrl && (d.fileDataUrl as string).startsWith('data:') && (
+                      <a href={d.fileDataUrl as string} download={d.fileRef} style={{ ...btn('#8B5CF6', { padding: '5px 10px' }), textDecoration: 'none' }}><Download style={{ width: 11, height: 11 }} /></a>
+                    )}
+                    <button onClick={() => setExpandedRev(expandedRev === d.id ? null : d.id)} style={btn('#475569', { padding: '5px 10px', fontSize: 11 })}>
+                      History {(d.revisionHistory ?? []).length > 0 && `(${d.revisionHistory.length})`}
+                    </button>
+                    <button onClick={() => openEdit(d)} style={btn(ACCENT, { padding: '5px 10px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
+                    {confirmDel === d.id ? (
+                      <><button onClick={() => { deleteDrawing(d.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '5px 10px' })}>✓</button><button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '5px 10px' })}>✗</button></>
+                    ) : (
+                      <button onClick={() => setConfirmDel(d.id)} style={btn('#EF4444', { padding: '5px 10px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
+                    )}
+                  </div>
+                </div>
+
+                {expandedRev === d.id && (
+                  <div style={{ marginTop: 12, borderTop: '1px solid var(--ec-border)', paddingTop: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ec-text-secondary)' }}>Revision History</div>
+                      <button style={btn(ACCENT, { padding: '4px 10px', fontSize: 11 })} onClick={() => setShowRevForm(showRevForm === d.id ? null : d.id)}>
+                        <Plus style={{ width: 11, height: 11 }} /> Add Revision
+                      </button>
+                    </div>
+                    {showRevForm === d.id && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 10, padding: 10, background: 'var(--ec-bg-surface)', borderRadius: 8 }}>
+                        <div><div style={label}>Rev No.</div><input value={revForm.rev} onChange={e => setRevForm(f => ({ ...f, rev: e.target.value }))} style={input()} placeholder="Rev.1" /></div>
+                        <div><div style={label}>Date</div><input type="date" value={revForm.date} onChange={e => setRevForm(f => ({ ...f, date: e.target.value }))} style={input()} /></div>
+                        <div><div style={label}>Description</div><input value={revForm.description} onChange={e => setRevForm(f => ({ ...f, description: e.target.value }))} style={input()} /></div>
+                        <div><div style={label}>Author</div><input value={revForm.author} onChange={e => setRevForm(f => ({ ...f, author: e.target.value }))} style={input()} /></div>
+                        <div style={{ gridColumn: 'span 4', display: 'flex', gap: 6 }}>
+                          <button style={btn(ACCENT, { padding: '5px 12px', fontSize: 11 })} onClick={() => addRevision(d.id)}><CheckCircle style={{ width: 11, height: 11 }} /> Add</button>
+                          <button style={btn('#475569', { padding: '5px 12px', fontSize: 11 })} onClick={() => setShowRevForm(null)}>Cancel</button>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    )}
+                    {!d.revisionHistory || d.revisionHistory.length === 0
+                      ? <div style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>No revision history recorded.</div>
+                      : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead><tr>{['Rev','Date','Description','Author'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                          <tbody>{d.revisionHistory.map((r, j) => (
+                            <tr key={j} style={{ background: j % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                              <td style={td({ fontWeight: 700 })}>{r.rev}</td>
+                              <td style={td()}>{r.date}</td>
+                              <td style={td()}>{r.description}</td>
+                              <td style={td()}>{r.author}</td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      )}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
     </div>
   );
 }
 
-// ─── SECTION: Power Distribution Tree ────────────────────────────────────────
+// ─── SECTION: Power Distribution & Interlocking ──────────────────────────────
+
+const BREAKER_STATE_DEFAULTS: LVBreakerState = { breakerRef: '', normalState: 'Closed', blackoutState: 'Open', returnState: 'Closed' };
+const SWITCHING_DEFAULTS: Omit<LVSwitchingRecord, 'id' | 'createdAt'> = {
+  powerSource: '', transformerRef: '', busCouplerRef: '', dgRef: '',
+  normalCondition: '', blackoutCondition: '', returnToNormal: '',
+  breakerStates: [], interlockingReqs: '', operatingRemarks: '',
+  relatedDrawings: '', verificationStatus: 'Unverified',
+};
 
 function PowerDist() {
-  const { panels } = useLVPanelStore();
+  const { panels, switchingRecords, addSwitchingRecord, updateSwitchingRecord, deleteSwitchingRecord } = useLVPanelStore();
+  const [activeTab, setActiveTab] = useState<'tree' | 'switching'>('tree');
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState<Omit<LVSwitchingRecord, 'id' | 'createdAt'>>(SWITCHING_DEFAULTS);
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) => setExpanded(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const roots = panels.filter(p => !p.parentPanel);
   const children = (parentId: string) => panels.filter(p => p.parentPanel === parentId);
 
+  const setF = (k: keyof Omit<LVSwitchingRecord, 'id' | 'createdAt'>, v: unknown) => setForm(f => ({ ...f, [k]: v }));
+  const openAdd = () => { setForm(SWITCHING_DEFAULTS); setEditId(null); setShowForm(true); };
+  const openEdit = (r: LVSwitchingRecord) => { const { id, createdAt, ...rest } = r; setForm(rest); setEditId(id); setShowForm(true); };
+  const save = () => { if (editId) updateSwitchingRecord(editId, form); else addSwitchingRecord(form); setShowForm(false); };
+
+  const addBreakerRow = () => setF('breakerStates', [...form.breakerStates, { ...BREAKER_STATE_DEFAULTS }]);
+  const removeBreakerRow = (i: number) => setF('breakerStates', form.breakerStates.filter((_, j) => j !== i));
+  const setBreakerState = (i: number, k: keyof LVBreakerState, v: string) =>
+    setF('breakerStates', form.breakerStates.map((b, j) => j === i ? { ...b, [k]: v } : b));
+
+  const VS: VerificationStatus[] = ['Unverified', 'Engineer Reviewed', 'Approved'];
+  const STATES = ['Open', 'Closed', 'N/A'];
+
   const renderNode = (p: LVPanel, depth: number): React.ReactNode => {
     const kids = children(p.panelId);
     const isExp = expanded.has(p.panelId);
     return (
-      <div key={p.id} style={{ marginLeft: depth * 24 }}>
-        <div
-          onClick={() => kids.length > 0 && toggle(p.panelId)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-            borderRadius: 8, cursor: kids.length > 0 ? 'pointer' : 'default',
-            background: depth === 0 ? ACCENT + '22' : 'var(--ec-bg-surface)',
-            border: `1px solid ${depth === 0 ? ACCENT + '55' : 'var(--ec-border)'}`,
-            marginBottom: 4, userSelect: 'none',
-          }}
-        >
+      <div key={p.id} style={{ marginLeft: depth * 28 }}>
+        <div onClick={() => kids.length > 0 && toggle(p.panelId)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8, cursor: kids.length > 0 ? 'pointer' : 'default', background: depth === 0 ? ACCENT + '22' : 'var(--ec-bg-surface)', border: `1px solid ${depth === 0 ? ACCENT + '55' : 'var(--ec-border)'}`, marginBottom: 4, userSelect: 'none' }}>
           {kids.length > 0 && (isExp ? <ChevronDown style={{ width: 13, height: 13 }} /> : <ChevronRight style={{ width: 13, height: 13 }} />)}
+          <Server style={{ width: 13, height: 13, color: ACCENT }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT }}>{p.panelId}</span>
           <StatusBadge status={p.panelType} />
-          {p.panelName && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>{p.panelName}</span>}
+          {p.panelName && <span style={{ fontSize: 11, color: 'var(--ec-text-secondary)' }}>{p.panelName}</span>}
           <span style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginLeft: 'auto' }}>
-            {p.connectedLoadKW > 0 && `${p.connectedLoadKW} kW`} {p.location && `· ${p.location}`}
+            {p.connectedLoadKW > 0 ? `${p.connectedLoadKW} kW` : ''}{p.location ? ` · ${p.location}` : ''}
           </span>
         </div>
         {kids.length > 0 && isExp && kids.map(c => renderNode(c, depth + 1))}
@@ -1681,22 +2228,149 @@ function PowerDist() {
 
   return (
     <div>
-      <SectionHeader title="Power Distribution Tree" subtitle="Panel hierarchy and single-line view" icon={Activity} />
-      {panels.length === 0
-        ? <EmptyState icon={Activity} title="No panels" sub='Register panels with parent relationships to build the distribution tree.' />
-        : (
-          <div style={card()}>
-            <div style={{ fontSize: 12, color: 'var(--ec-text-muted)', marginBottom: 12 }}>
-              Click on panels to expand/collapse children. Set "Parent Panel" in Panel Register to build hierarchy.
-            </div>
-            {roots.map(p => renderNode(p, 0))}
-            {roots.length === 0 && (
-              <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>
-                No root panels found. Leave the "Parent Panel" field empty in Panel Register for root panels.
-              </div>
-            )}
+      <SectionHeader title="Power Distribution & Interlocking" subtitle="Distribution hierarchy, switching sequences and interlocking documentation" icon={Activity} />
+
+      <div style={{ ...card({ background: '#EF444411', border: '1px solid #EF444433' }), marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <AlertCircle style={{ width: 18, height: 18, color: '#EF4444', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ fontSize: 11, color: '#EF4444', lineHeight: 1.7 }}>
+            <b>IMPORTANT DISCLAIMER:</b> This module is for <b>engineering documentation and monitoring only</b>. It records intended switching sequences and interlocking requirements for reference purposes only.<br />
+            <b>This module must not be used to issue switching commands to electrical equipment.</b> It does not replace the approved Switching Procedure, Permit to Work, or safety isolation requirements. All switching must be carried out by authorised personnel following the approved procedure.
           </div>
-        )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '2px solid var(--ec-border)', paddingBottom: 0 }}>
+        {(['tree', 'switching'] as const).map(t => (
+          <button key={t} onClick={() => setActiveTab(t)} style={{ padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: 'none', color: activeTab === t ? ACCENT : 'var(--ec-text-muted)', borderBottom: `2px solid ${activeTab === t ? ACCENT : 'transparent'}`, marginBottom: -2 }}>
+            {t === 'tree' ? 'Distribution Hierarchy' : 'Switching Sequences'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'tree' && (
+        panels.length === 0
+          ? <EmptyState icon={Activity} title="No panels" sub='Register panels with Parent Panel relationships in Panel Register to build the distribution hierarchy.' />
+          : (
+            <div style={card()}>
+              <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginBottom: 12 }}>Set "Parent Panel" in Panel Register to build the hierarchy. Click panels to expand/collapse.</div>
+              {roots.length === 0
+                ? <div style={{ fontSize: 12, color: 'var(--ec-text-muted)' }}>No root panels found — leave "Parent Panel" blank for root-level panels.</div>
+                : roots.map(p => renderNode(p, 0))}
+            </div>
+          )
+      )}
+
+      {activeTab === 'switching' && (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center' }}>
+            <button style={btn(ACCENT)} onClick={openAdd}><Plus style={{ width: 14, height: 14 }} /> Add Switching Sequence</button>
+            <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ec-text-muted)' }}>{switchingRecords.length} sequence(s) documented</div>
+          </div>
+
+          {showForm && (
+            <div style={{ ...card(), marginBottom: 16, border: `1px solid ${ACCENT}55` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: ACCENT }}>{editId ? 'Edit Switching Sequence' : 'Add Switching Sequence'}</div>
+              <div style={{ ...card({ background: '#F59E0B11', border: '1px solid #F59E0B33' }), marginBottom: 12, fontSize: 11, color: 'var(--ec-text-secondary)' }}>
+                This record is for engineering documentation only. It does not constitute a switching instruction or permit to work.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
+                <div><div style={label}>Power Source</div><input value={form.powerSource} onChange={e => setF('powerSource', e.target.value)} style={input()} placeholder="e.g. Utility / Incomer" /></div>
+                <div><div style={label}>Transformer Ref</div><input value={form.transformerRef} onChange={e => setF('transformerRef', e.target.value)} style={input()} /></div>
+                <div><div style={label}>Bus Coupler Ref</div><input value={form.busCouplerRef} onChange={e => setF('busCouplerRef', e.target.value)} style={input()} /></div>
+                <div><div style={label}>DG Set Ref</div><input value={form.dgRef} onChange={e => setF('dgRef', e.target.value)} style={input()} /></div>
+                <div style={{ gridColumn: 'span 4' }}><div style={label}>Normal Condition Description</div><input value={form.normalCondition} onChange={e => setF('normalCondition', e.target.value)} style={input()} placeholder="Describe power system in normal operating state" /></div>
+                <div style={{ gridColumn: 'span 4' }}><div style={label}>Blackout / Mains Failure Condition</div><input value={form.blackoutCondition} onChange={e => setF('blackoutCondition', e.target.value)} style={input()} placeholder="Describe state during mains failure" /></div>
+                <div style={{ gridColumn: 'span 4' }}><div style={label}>Return to Normal Sequence</div><input value={form.returnToNormal} onChange={e => setF('returnToNormal', e.target.value)} style={input()} placeholder="Describe sequence when mains is restored" /></div>
+                <div style={{ gridColumn: 'span 2' }}><div style={label}>Interlocking Requirements</div><input value={form.interlockingReqs} onChange={e => setF('interlockingReqs', e.target.value)} style={input()} /></div>
+                <div><div style={label}>Related Drawings</div><input value={form.relatedDrawings} onChange={e => setF('relatedDrawings', e.target.value)} style={input()} /></div>
+                <div>
+                  <div style={label}>Verification Status</div>
+                  <select value={form.verificationStatus} onChange={e => setF('verificationStatus', e.target.value as VerificationStatus)} style={input()}>
+                    {VS.map(v => <option key={v}>{v}</option>)}
+                  </select>
+                </div>
+                <div style={{ gridColumn: 'span 4' }}><div style={label}>Operating Remarks</div><input value={form.operatingRemarks} onChange={e => setF('operatingRemarks', e.target.value)} style={input()} /></div>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>Breaker State Matrix</div>
+                  <button style={btn(ACCENT, { padding: '4px 10px', fontSize: 11 })} onClick={addBreakerRow}><Plus style={{ width: 11, height: 11 }} /> Add Breaker</button>
+                </div>
+                {form.breakerStates.length > 0 && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr>{['Breaker Ref','Normal State','Blackout State','Return State',''].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {form.breakerStates.map((b, i) => (
+                        <tr key={i}>
+                          <td style={td()}><input value={b.breakerRef} onChange={e => setBreakerState(i, 'breakerRef', e.target.value)} style={input()} placeholder="e.g. ACB-MDB-01" /></td>
+                          {(['normalState','blackoutState','returnState'] as const).map(k => (
+                            <td key={k} style={td()}>
+                              <select value={b[k]} onChange={e => setBreakerState(i, k, e.target.value as LVBreakerState[typeof k])} style={input()}>
+                                {STATES.map(s => <option key={s}>{s}</option>)}
+                              </select>
+                            </td>
+                          ))}
+                          <td style={td()}><button onClick={() => removeBreakerRow(i)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button style={btn(ACCENT)} onClick={save}><CheckCircle style={{ width: 13, height: 13 }} /> Save</button>
+                <button style={btn('#475569')} onClick={() => setShowForm(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {switchingRecords.length === 0
+            ? <EmptyState icon={Activity} title="No switching sequences" sub='Document switching sequences for engineering reference. This does not replace the approved switching procedure.' />
+            : switchingRecords.map((r, i) => (
+              <div key={r.id} style={{ ...card(), marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT }}>Sequence #{i + 1}</span>
+                  {r.powerSource && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>{r.powerSource}</span>}
+                  {r.transformerRef && <StatusBadge status={`TR: ${r.transformerRef}`} />}
+                  {r.dgRef && <StatusBadge status={`DG: ${r.dgRef}`} />}
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: r.verificationStatus === 'Approved' ? '#22C55E' : '#F59E0B' }}>{r.verificationStatus}</span>
+                    <button onClick={() => openEdit(r)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
+                    {confirmDel === r.id ? (
+                      <><button onClick={() => { deleteSwitchingRecord(r.id); setConfirmDel(null); }} style={btn('#EF4444', { padding: '4px 8px' })}>✓</button><button onClick={() => setConfirmDel(null)} style={btn('#475569', { padding: '4px 8px' })}>✗</button></>
+                    ) : (
+                      <button onClick={() => setConfirmDel(r.id)} style={btn('#EF4444', { padding: '4px 8px' })}><Trash2 style={{ width: 11, height: 11 }} /></button>
+                    )}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, fontSize: 11, color: 'var(--ec-text-secondary)', marginBottom: r.breakerStates.length > 0 ? 10 : 0 }}>
+                  {r.normalCondition && <div><b>Normal:</b> {r.normalCondition}</div>}
+                  {r.blackoutCondition && <div><b>Blackout:</b> {r.blackoutCondition}</div>}
+                  {r.returnToNormal && <div><b>Return:</b> {r.returnToNormal}</div>}
+                  {r.interlockingReqs && <div><b>Interlocking:</b> {r.interlockingReqs}</div>}
+                  {r.relatedDrawings && <div><b>Drawings:</b> {r.relatedDrawings}</div>}
+                  {r.operatingRemarks && <div><b>Remarks:</b> {r.operatingRemarks}</div>}
+                </div>
+                {r.breakerStates.length > 0 && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <thead><tr>{['Breaker Ref','Normal','Blackout','Return to Normal'].map(h => <th key={h} style={TH}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {r.breakerStates.map((b, j) => (
+                        <tr key={j} style={{ background: j % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
+                          <td style={td({ fontWeight: 700 })}>{b.breakerRef}</td>
+                          {(['normalState','blackoutState','returnState'] as const).map(k => (
+                            <td key={k} style={td({ color: b[k] === 'Closed' ? '#22C55E' : b[k] === 'Open' ? '#EF4444' : 'var(--ec-text-muted)', fontWeight: 600 })}>{b[k]}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            ))}
+        </>
+      )}
     </div>
   );
 }
