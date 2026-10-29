@@ -1,7 +1,22 @@
 import type { CableData } from '../types';
 
-// IEC 60364-5-52 Table B.52.2 - Current-carrying capacity (Amperes)
-// Cu XLPE cables, 3-core, various installation methods
+// ─── Cable Data Provenance ─────────────────────────────────────────────────────
+// Source   : IEC 60364-5-52:2009/AMD1:2017, Annex B (Table B.52.2 / B.52.4)
+// Standard : IEC 60364-5-52 (Wiring Systems — Current-carrying capacity)
+// Insulation temperature ratings:
+//   XLPE: max conductor 90°C (rated), values tabulated at 30°C ambient (see B.52.14 for Ct)
+//   PVC:  max conductor 70°C (rated), values tabulated at 30°C ambient
+// Installation methods mapped to IEC 60364-5-52 Reference Methods:
+//   A  → Ref. Method A  (in conduit in thermally insulating wall)
+//   T  → Ref. Method E  (multi-core cable on perforated tray, free air — sometimes labelled Method F for single-core)
+//   G  → Ref. Method D1 (in ground, without conduit)
+//   D  → Ref. Method D2 (in duct in ground)
+//   C  → Ref. Method C  (single multi-core cable clipped direct to surface)
+// Grouping: values are for a single circuit in isolation; apply Table B.52.17 (Cg) for groups
+// Assumptions: 3-core, round/oval, unarmoured; conductor at operating temperature per insulation class
+// Note: always verify against actual manufacturer datasheet for cable construction, armour, and site conditions.
+// ──────────────────────────────────────────────────────────────────────────────
+
 export const CABLE_DATA_CU_XLPE: CableData[] = [
   { size: 1.5,  type: 'Cu', insulation: 'XLPE', coreConfig: '3C', ampacity: { A: 22,  T: 18,  G: 22,  D: 17,  C: 16  }, resistance: 14.82, reactance: 0.115, weight: 0.35, od: 10.5 },
   { size: 2.5,  type: 'Cu', insulation: 'XLPE', coreConfig: '3C', ampacity: { A: 30,  T: 24,  G: 29,  D: 22,  C: 21  }, resistance: 8.91,  reactance: 0.112, weight: 0.50, od: 11.5 },

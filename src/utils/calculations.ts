@@ -5,6 +5,18 @@ import {
   getGroupingFactor,
 } from '../data/cableData';
 
+// ─── Shared validation helper ──────────────────────────────────────────────────
+function validationError(msg: string): CalculationResult {
+  return {
+    values: [{ label: 'Input Error', value: msg, unit: '', status: 'FAIL' }],
+    status: 'FAIL',
+    recommendation: `Correct the input: ${msg}`,
+    formula: '—',
+    steps: [],
+    standardRef: { standard: '—', clause: '—', title: 'Invalid input — no calculation performed' },
+  };
+}
+
 // ─── Cable Current ─────────────────────────────────────────────────────────────
 export function calculateCableCurrent(inputs: {
   power: number;
@@ -15,6 +27,12 @@ export function calculateCableCurrent(inputs: {
   efficiency: number;
 }): CalculationResult {
   const { power, powerUnit, voltage, phases, powerFactor, efficiency } = inputs;
+
+  // ── Input validation ────────────────────────────────────────────────────────
+  if (voltage <= 0)                              return validationError('System voltage must be > 0 V');
+  if (power   <= 0)                              return validationError('Power must be > 0');
+  if (phases !== 'DC' && (powerFactor <= 0 || powerFactor > 1)) return validationError('Power factor must be in range (0, 1]');
+  if (powerUnit !== 'kVA' && (efficiency <= 0 || efficiency > 1)) return validationError('Efficiency must be in range (0, 1]');
 
   // ── Derive apparent power S [kVA] and display active power P [kW] ──────────
   //
@@ -130,8 +148,16 @@ export function calculateVoltageDrop(inputs: {
   powerFactor: number;
   voltage: number;
   loadType: 'motor' | 'general';
+  maxVdPct?: number; // configurable limit — overrides the IEC default when provided
 }): CalculationResult {
   const { current, length, conductor, insulation, cableSize, phases, powerFactor, voltage, loadType } = inputs;
+
+  // ── Input validation ────────────────────────────────────────────────────────
+  if (voltage    <= 0)                       return validationError('System voltage must be > 0 V');
+  if (current    <= 0)                       return validationError('Load current must be > 0 A');
+  if (length     <= 0)                       return validationError('Cable length must be > 0 m');
+  if (cableSize  <= 0)                       return validationError('Cable size must be > 0 mm²');
+  if (powerFactor <= 0 || powerFactor > 1)   return validationError('Power factor must be in range (0, 1]');
 
   const cables = getCableData(conductor, insulation);
   const cable = cables.find((c) => c.size === cableSize) ?? cables[cables.length - 1];
@@ -156,15 +182,19 @@ export function calculateVoltageDrop(inputs: {
   }
 
   const vdPercent = (voltageDrop / voltage) * 100;
-  const maxVd = loadType === 'motor' ? 5 : 3;
+  const iecDefault = loadType === 'motor' ? 5 : 3;
+  const maxVd = inputs.maxVdPct ?? iecDefault;
+  const limitSource = inputs.maxVdPct !== undefined
+    ? `Project specification: ${maxVd}%`
+    : `IEC 60364-5-52:2013 Annex G recommendation: ${maxVd}% (${loadType === 'motor' ? 'motor' : 'general'} load)`;
   const status = vdPercent <= maxVd ? 'PASS' : 'FAIL';
 
   const steps: CalculationStep[] = [
     {
       step: 1,
-      description: 'Cable impedance parameters',
-      formula: `R = ${R} Ω/km (at 90°C), X = ${X} Ω/km`,
-      result: `From IEC 60364-5-52 Table B.52.2 for ${cableSize} mm² ${conductor} ${insulation}`,
+      description: 'Cable impedance parameters — IEC 60364-5-52:2013 Table B.52.2',
+      formula: `R = ${R} Ω/km (at max operating temp: ${insulation === 'XLPE' ? '90°C XLPE' : '70°C PVC'}), X = ${X} Ω/km`,
+      result: `${cableSize} mm² ${conductor} ${insulation} — source: IEC 60364-5-52:2013 Table B.52.2, 3-core, 30°C ambient`,
     },
     {
       step: 2,
@@ -186,7 +216,7 @@ export function calculateVoltageDrop(inputs: {
     },
     {
       step: 5,
-      description: `Compare with maximum allowable (${maxVd}% per IEC 60364-5-52)`,
+      description: `Compare with maximum allowable — ${limitSource}`,
       formula: `${vdPercent.toFixed(2)}% ${vdPercent <= maxVd ? '≤' : '>'} ${maxVd}%`,
       result: status,
     },
@@ -196,7 +226,7 @@ export function calculateVoltageDrop(inputs: {
     values: [
       { label: 'Voltage Drop', value: voltageDrop.toFixed(2), unit: 'V', highlight: true },
       { label: 'Voltage Drop %', value: vdPercent.toFixed(2), unit: '%', status, highlight: true },
-      { label: 'Max Allowable', value: maxVd.toString(), unit: '%' },
+      { label: 'Max Allowable VD', value: maxVd.toString(), unit: `% (${limitSource})` },
       { label: 'Receiving End Voltage', value: (voltage - voltageDrop).toFixed(1), unit: 'V' },
       { label: 'Cable R (90°C)', value: R.toString(), unit: 'Ω/km' },
       { label: 'Cable X', value: X.toString(), unit: 'Ω/km' },
@@ -388,8 +418,17 @@ export function calculateShortCircuit(inputs: {
   faultType: '3ph' | 'SLG' | 'DL' | 'EF';
   faultDuration: number;        // s
   xrRatio: number;
+  deviceBreakingKA?: number;    // protective device Icu [kA] — if provided, verified against fault current
 }): CalculationResult {
   const { voltage, transformerMVA, transformerImpedance, cableLength, cableSize, conductor, faultType, faultDuration, xrRatio } = inputs;
+
+  // ── Input validation ────────────────────────────────────────────────────────
+  if (voltage              <= 0) return validationError('System voltage must be > 0 kV');
+  if (transformerMVA       <= 0) return validationError('Transformer rating must be > 0 MVA');
+  if (transformerImpedance <= 0) return validationError('Transformer impedance must be > 0 %');
+  if (cableSize            <= 0) return validationError('Cable size must be > 0 mm²');
+  if (faultDuration        <= 0) return validationError('Fault clearing time must be > 0 s');
+  if (xrRatio              <= 0) return validationError('X/R ratio must be > 0');
 
   const Vn  = voltage * 1000;         // V line-to-line
   const Vph = Vn / Math.sqrt(3);      // V phase-to-neutral
@@ -480,6 +519,11 @@ export function calculateShortCircuit(inputs: {
   const minSize = (Ik * Math.sqrt(faultDuration)) / k;
   const cablePasses = cableSize >= minSize;
 
+  // ── Protective device breaking capacity check ─────────────────────────────
+  const deviceBreakingKA = inputs.deviceBreakingKA ?? 0;
+  const bcChecked = deviceBreakingKA > 0;
+  const bcPasses  = !bcChecked || deviceBreakingKA >= IkKA;
+
   const faultLabel: Record<string, string> = {
     '3ph': '3-Phase Symmetrical',
     DL:   'Line-to-Line (Double Line)',
@@ -526,11 +570,21 @@ export function calculateShortCircuit(inputs: {
     },
     {
       step: 7,
-      description: 'Cable minimum thermal cross-section (IEC 60364-5-54 adiabatic, Table 54.3)',
-      formula: `S_min = I_k·√t / k = ${IkKA.toFixed(3)}k×√${faultDuration} / ${k}  [k=${k} A·s^0.5/mm² for ${conductor}/XLPE]`,
+      description: 'Cable minimum thermal cross-section — IEC 60364-5-54:2011 Table 54.3, adiabatic method',
+      formula: `S_min = I_k·√t / k = ${IkKA.toFixed(3)}k×√${faultDuration} / ${k}  [k=${k} A·s^0.5/mm² for ${conductor}/XLPE, initial temp 90°C, final 250°C]`,
       result: `${minSize.toFixed(1)} mm² min  →  ${cableSize} mm² selected: ${cableSize >= minSize ? '✓ PASS' : '✗ FAIL'}`,
     },
+    ...(bcChecked ? [{
+      step: 8,
+      description: 'Protective device breaking capacity — IEC 60947-2:2016 §7.3.4 (I_cu ≥ I"k at installation point)',
+      formula: `I_cu = ${deviceBreakingKA.toFixed(1)} kA  ${bcPasses ? '≥' : '<'}  I"k = ${IkKA.toFixed(3)} kA`,
+      result: bcPasses
+        ? `✓ PASS — device rated ${deviceBreakingKA.toFixed(1)} kA ≥ fault level ${IkKA.toFixed(3)} kA`
+        : `✗ FAIL — device ${deviceBreakingKA.toFixed(1)} kA < fault level ${IkKA.toFixed(3)} kA — SELECT HIGHER RATED DEVICE`,
+    }] : []),
   ];
+
+  const overallPasses = cablePasses && bcPasses;
 
   return {
     values: [
@@ -546,9 +600,10 @@ export function calculateShortCircuit(inputs: {
       { label: 'Peak Factor κ', value: kappa.toFixed(3), unit: '' },
       { label: 'Min Cable Thermal Withstand', value: minSize.toFixed(1), unit: 'mm²' },
       { label: 'Cable Thermal Check', value: cablePasses ? 'PASS' : 'FAIL', unit: '', status: cablePasses ? 'PASS' : 'FAIL' },
+      ...(bcChecked ? [{ label: 'Device Breaking Capacity', value: bcPasses ? 'PASS' : 'FAIL', unit: `${deviceBreakingKA.toFixed(1)} kA rated`, status: (bcPasses ? 'PASS' : 'FAIL') as 'PASS' | 'FAIL' }] : []),
     ],
-    status: cablePasses ? 'PASS' : 'FAIL',
-    recommendation: `${faultLabel[faultType]}: ${IkKA.toFixed(3)} kA symmetrical, ${IpKA.toFixed(3)} kA peak. Cable resistance: ${cableR_km.toFixed(4)} Ω/km (${conductor} at 20°C). Thermal withstand needs ≥${minSize.toFixed(1)} mm² — ${cableSize} mm² is ${cablePasses ? 'ADEQUATE' : 'UNDERSIZED — increase to ' + Math.ceil(minSize) + ' mm²'}.`,
+    status: overallPasses ? 'PASS' : 'FAIL',
+    recommendation: `${faultLabel[faultType]}: ${IkKA.toFixed(3)} kA symmetrical, ${IpKA.toFixed(3)} kA peak. Cable resistance: ${cableR_km.toFixed(4)} Ω/km (${conductor} at 20°C, IEC 60228). Thermal withstand needs ≥${minSize.toFixed(1)} mm² — ${cableSize} mm² is ${cablePasses ? 'ADEQUATE' : 'UNDERSIZED — increase to ' + Math.ceil(minSize) + ' mm²'}.${bcChecked ? ` Device Icu ${deviceBreakingKA.toFixed(1)} kA: ${bcPasses ? 'ADEQUATE' : 'INADEQUATE — upgrade device'}.` : ' Enter device Icu to verify breaking capacity.'}`,
     formula: faultFormula,
     steps,
     standardRef: {
@@ -768,18 +823,28 @@ export function calculateTransformer(inputs: {
 
 // ─── Earthing Calculator ───────────────────────────────────────────────────────
 export function calculateEarthing(inputs: {
-  soilResistivity: number; // Ω·m
-  gridLength: number;      // m (total conductor length)
-  gridArea: number;        // m²
-  conductorSize: number;   // mm²
+  soilResistivity: number;       // Ω·m
+  gridLength: number;            // m (total conductor length)
+  gridArea: number;              // m²
+  conductorSize: number;         // mm²
   conductor: 'Cu' | 'GI';
-  faultCurrent: number;    // A
-  faultDuration: number;   // s
+  faultCurrent: number;          // A — maximum single-phase-to-earth fault current
+  faultDuration: number;         // s — fault clearing time
   earthPits: number;
-  pitDepth: number;        // m
-  pitDiameter: number;     // m
+  pitDepth: number;              // m
+  pitDiameter: number;           // cm — electrode diameter
+  surfaceResistivity?: number;   // Ω·m — surface layer (crushed rock, concrete, etc.)
+  earthingSystem?: 'TN-S' | 'TN-C' | 'TN-C-S' | 'TT' | 'IT';
 }): CalculationResult {
   const { soilResistivity: ρ, gridLength: L, gridArea: A, conductorSize, conductor, faultCurrent, faultDuration, earthPits, pitDepth, pitDiameter } = inputs;
+
+  // ── Input validation ────────────────────────────────────────────────────────
+  if (ρ            <= 0) return validationError('Soil resistivity must be > 0 Ω·m');
+  if (L            <= 0) return validationError('Grid conductor length must be > 0 m');
+  if (A            <= 0) return validationError('Grid area must be > 0 m²');
+  if (faultCurrent <= 0) return validationError('Earth fault current must be > 0 A');
+  if (faultDuration <= 0) return validationError('Fault clearing time must be > 0 s');
+  if (earthPits > 0 && pitDepth <= 0) return validationError('Pit depth must be > 0 m');
 
   // Grid resistance — Schwarz formula (IEEE 80 Eq. 57)
   const sqrtA = Math.sqrt(A);
@@ -795,16 +860,34 @@ export function calculateEarthing(inputs: {
   // Combined resistance (grid + pits in parallel)
   const Rtotal = (Rg * Rpits) / (Rg + Rpits);
 
-  // Touch and step voltages (IEEE 80 Section 16)
-  const Vs = Rtotal * faultCurrent;
-  const tolerableStep = (1000 + 6 * 150) * (0.157 / Math.sqrt(faultDuration)); // 70 kg body weight
-  const tolerableTouch = (1000 + 1.5 * 150) * (0.157 / Math.sqrt(faultDuration));
+  // Surface layer resistivity — affects tolerable touch/step voltages (IEEE 80 §5)
+  // Default: 3000 Ω·m (crusher-run granite — common substation practice)
+  // Use 0 or omit if no surface layer treatment is applied (ρs = ρ_soil)
+  const ρs = inputs.surfaceResistivity ?? ρ;
 
-  // Conductor thermal withstand (IEEE 80 Eq. 37)
+  // Ground Potential Rise (GPR) — IEEE 80 §16.1
+  // NOTE: GPR is an upper bound on touch voltage; actual mesh voltage requires detailed grid analysis
+  const GPR = Rtotal * faultCurrent;
+
+  // Tolerable step and touch voltages — IEEE 80:2013 Eq. (29) & (32), 70 kg body weight
+  const tolerableStep  = (1000 + 6   * ρs) * (0.157 / Math.sqrt(faultDuration));
+  const tolerableTouch = (1000 + 1.5 * ρs) * (0.157 / Math.sqrt(faultDuration));
+
+  // Conductor thermal withstand — IEEE 80:2013 Eq. (37), simplified adiabatic
   const k = conductor === 'Cu' ? 226 : 80;
   const Amin = (faultCurrent / k) * Math.sqrt(faultDuration) * 1000; // mm²
 
-  const gridPasses = Rtotal <= 5 && Vs <= tolerableTouch;
+  // Earthing system note
+  const earthSysNotes: Record<string, string> = {
+    'TN-S':   'TN-S: separate PE + N — low impedance fault loop; auto-disconnection within times per IEC 60364-4-41 Table 41.1',
+    'TN-C':   'TN-C: combined PEN conductor — not permitted for circuits < 10 mm² Cu or in explosive areas; verify PEN sizing',
+    'TN-C-S': 'TN-C-S: PEN upstream, separate PE/N downstream — disconnection times per IEC 60364-4-41 Table 41.1',
+    'TT':     'TT: independent installation earth electrode — RCD protection usually required; Ra × Ia ≤ 50 V (IEC 60364-4-41 §411.5)',
+    'IT':     'IT: unearthed or impedance earthed supply — first fault carries small current; insulation monitoring device required',
+  };
+  const sysNote = inputs.earthingSystem ? earthSysNotes[inputs.earthingSystem] : 'Earthing system not specified — verify disconnection times per IEC 60364-4-41';
+
+  const gridPasses = Rtotal <= 5 && GPR <= tolerableTouch;
 
   const steps: CalculationStep[] = [
     {
@@ -833,42 +916,51 @@ export function calculateEarthing(inputs: {
     },
     {
       step: 5,
-      description: 'Earth surface potential (touch voltage)',
-      formula: `V_s = R × I_f = ${Rtotal.toFixed(3)} × ${faultCurrent}`,
-      result: `${Vs.toFixed(1)} V`,
+      description: 'Ground Potential Rise (GPR) — IEEE 80:2013 §16.1',
+      formula: `GPR = R_total × I_f = ${Rtotal.toFixed(3)} × ${faultCurrent}`,
+      result: `${GPR.toFixed(1)} V  (note: GPR is an upper bound — actual mesh voltage requires grid geometry analysis)`,
     },
     {
       step: 6,
-      description: 'Tolerable touch voltage (IEEE 80 Eq. 29, 70 kg body)',
-      formula: `V_touch = (1000 + 1.5×ρ_s) × 0.157/√t = (1000 + 1.5×150) × 0.157/√${faultDuration}`,
-      result: `${tolerableTouch.toFixed(1)} V`,
+      description: 'Tolerable touch and step voltages — IEEE 80:2013 Eq. (29)/(32), 70 kg body, surface ρs = ' + ρs.toFixed(0) + ' Ω·m',
+      formula: `V_touch = (1000 + 1.5×ρs) × 0.157/√t = (1000 + 1.5×${ρs}) × 0.157/√${faultDuration};  V_step = (1000 + 6×${ρs}) × 0.157/√${faultDuration}`,
+      result: `V_touch = ${tolerableTouch.toFixed(1)} V,  V_step = ${tolerableStep.toFixed(1)} V`,
     },
     {
       step: 7,
-      description: 'Minimum conductor size (IEEE 80 Eq. 37)',
-      formula: `A_min = (I_f/k) × √t = (${faultCurrent}/${k}) × √${faultDuration}`,
-      result: `${Amin.toFixed(1)} mm² — Selected: ${conductorSize} mm² ${conductor}`,
+      description: 'Minimum conductor size — IEEE 80:2013 Eq. (37), adiabatic; Cu: k=226, GI: k=80',
+      formula: `A_min = (I_f/k) × √t × 1000 = (${faultCurrent}/${k}) × √${faultDuration} × 1000`,
+      result: `${Amin.toFixed(1)} mm² — Selected: ${conductorSize} mm² ${conductor}: ${conductorSize >= Amin ? '✓ PASS' : '✗ FAIL — increase size'}`,
+    },
+    {
+      step: 8,
+      description: 'Earthing system and disconnection requirements',
+      formula: sysNote,
+      result: inputs.earthingSystem ?? 'Not specified — specify earthing system for disconnection time verification',
     },
   ];
 
   return {
     values: [
-      { label: 'Grid Resistance', value: Rg.toFixed(3), unit: 'Ω' },
-      { label: 'Combined Earth Resistance', value: Rtotal.toFixed(3), unit: 'Ω', highlight: true, status: Rtotal <= 5 ? 'PASS' : 'FAIL' },
-      { label: 'Touch Voltage', value: Vs.toFixed(1), unit: 'V', status: Vs <= tolerableTouch ? 'PASS' : 'FAIL' },
-      { label: 'Tolerable Touch Voltage', value: tolerableTouch.toFixed(1), unit: 'V' },
-      { label: 'Tolerable Step Voltage', value: tolerableStep.toFixed(1), unit: 'V' },
-      { label: 'Min Conductor Size', value: Amin.toFixed(1), unit: 'mm²' },
-      { label: 'Selected Conductor', value: conductorSize.toString(), unit: `mm² ${conductor}`, status: conductorSize >= Amin ? 'PASS' : 'FAIL' },
+      { label: 'Grid Resistance (Rg)',        value: Rg.toFixed(3),      unit: 'Ω' },
+      { label: 'Combined Earth Resistance',   value: Rtotal.toFixed(3),  unit: 'Ω', highlight: true, status: Rtotal <= 5 ? 'PASS' : 'FAIL' },
+      { label: 'Ground Potential Rise (GPR)', value: GPR.toFixed(1),     unit: 'V', status: GPR <= tolerableTouch ? 'PASS' : 'FAIL' },
+      { label: 'Tolerable Touch Voltage',     value: tolerableTouch.toFixed(1), unit: 'V' },
+      { label: 'Tolerable Step Voltage',      value: tolerableStep.toFixed(1),  unit: 'V' },
+      { label: 'Surface Resistivity (ρs)',    value: ρs.toFixed(0),      unit: 'Ω·m' },
+      { label: 'Earthing System',             value: inputs.earthingSystem ?? 'Not specified', unit: '' },
+      { label: 'Min Conductor Size',          value: Amin.toFixed(1),    unit: 'mm²' },
+      { label: 'Selected Conductor',          value: conductorSize.toString(), unit: `mm² ${conductor}`, status: conductorSize >= Amin ? 'PASS' : 'FAIL' },
     ],
     status: gridPasses ? 'PASS' : 'FAIL',
-    recommendation: `Earth resistance: ${Rtotal.toFixed(3)} Ω ${Rtotal <= 5 ? '(≤ 5 Ω — ACCEPTABLE per IEEE 80)' : '(> 5 Ω — ADD MORE CONDUCTORS or EARTH PITS)'}. Touch voltage: ${Vs.toFixed(1)} V ${Vs <= tolerableTouch ? '(SAFE)' : '(UNSAFE — improve grid)'}. Use ${conductorSize >= Amin ? conductorSize : Math.ceil(Amin)} mm² ${conductor} conductor.`,
-    formula: 'R_g = ρ/(4√A) + ρ/L',
+    recommendation: `Earth resistance: ${Rtotal.toFixed(3)} Ω ${Rtotal <= 5 ? '(≤ 5 Ω — ACCEPTABLE per IEEE 80)' : '(> 5 Ω — ADD MORE CONDUCTORS or EARTH PITS)'}. GPR: ${GPR.toFixed(1)} V vs tolerable touch ${tolerableTouch.toFixed(1)} V (IEEE 80, 70 kg, ρs = ${ρs.toFixed(0)} Ω·m) ${GPR <= tolerableTouch ? '(SAFE)' : '(EXCEEDS LIMIT — improve grid or add surface treatment)'}. Conductor: ${conductorSize >= Amin ? conductorSize : Math.ceil(Amin)} mm² ${conductor} required. ${sysNote}`,
+    formula: 'R_g = ρ/(4√A) + ρ/L  (Schwarz, IEEE 80)',
     steps,
     standardRef: {
-      standard: 'IEEE 80',
-      clause: '16.3 — 17',
-      title: 'AC Substation Grounding — Grid and step/touch voltage',
+      standard: 'IEEE 80:2013',
+      clause: '§16.3–17',
+      table: 'Eq. 29, 32, 37, 57',
+      title: 'Guide for Safety in AC Substation Grounding',
     },
   };
 }

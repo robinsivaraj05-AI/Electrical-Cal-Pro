@@ -45,14 +45,20 @@ export function VoltageDrop() {
   const [insulation,  setInsulation] = useState<'PVC'|'XLPE'>('XLPE');
   const [cableSize,   setCableSize]  = useState('35');
   const [loadType,    setLoadType]   = useState<'motor'|'general'>('motor');
+  const [maxVdPct,    setMaxVdPct]   = useState('');   // empty = use IEC default
   const [result,      setResult]     = useState<CalculationResult | null>(null);
   const [learningMode, setLM]        = useState(true);
+
+  // Keep the custom limit in sync with the load-type default so users see the pre-fill
+  const iecDefault = loadType === 'motor' ? '5' : '3';
+  const effectiveMax = maxVdPct !== '' ? parseFloat(maxVdPct) : undefined;
 
   const calculate = () => {
     const res = calculateVoltageDrop({
       current: parseFloat(current), length: parseFloat(length), conductor, insulation,
       cableSize: parseFloat(cableSize), phases: parseInt(phases) as 1|3,
-      powerFactor: parseFloat(powerFactor), voltage: parseFloat(voltage), loadType,
+      powerFactor: parseFloat(powerFactor), voltage: parseFloat(voltage),
+      loadType, maxVdPct: effectiveMax,
     });
     setResult(res);
     addCalculation({
@@ -88,7 +94,10 @@ export function VoltageDrop() {
           </FieldRow>
           <FieldRow cols="1fr 1fr">
             <SelectInput label="Phase System" value={phases} onChange={(v) => setPhases(v as '1'|'3')} options={[{ value:'3', label:'3-Phase (√3 factor)' },{ value:'1', label:'1-Phase (×2 factor)' }]} />
-            <SelectInput label="Load Type (VD limit)" value={loadType} onChange={(v) => setLoadType(v as 'motor'|'general')} options={[{ value:'motor', label:'Motor (limit 5%)' },{ value:'general', label:'General (limit 3%)' }]} tooltip="IEC 60364-5-52 recommended limits" />
+            <SelectInput label="Load Type (IEC default)" value={loadType} onChange={(v) => setLoadType(v as 'motor'|'general')} options={[{ value:'motor', label:'Motor — IEC default 5%' },{ value:'general', label:'General — IEC default 3%' }]} tooltip="Sets the IEC 60364-5-52 Annex G default limit; override below if project specification differs" />
+          </FieldRow>
+          <FieldRow cols="1fr 1fr">
+            <TextInput label={`Max VD limit (blank = IEC default ${iecDefault}%)`} value={maxVdPct} onChange={setMaxVdPct} unit="%" min={0.1} max={20} step={0.1} tooltip="Override the IEC default with project specification limit (e.g. 2.5% for critical loads, 5% per AS/NZS 3008). Leave blank to use IEC 60364-5-52 recommendation." />
           </FieldRow>
 
           <SectionLabel title="Cable Properties" />

@@ -51,6 +51,7 @@ export function ShortCircuit() {
   const [faultType,          setFaultType] = useState<'3ph'|'SLG'|'DL'|'EF'>('3ph');
   const [faultDuration,      setFaultDur]  = useState('0.5');
   const [xrRatio,            setXR]        = useState('10');
+  const [deviceBreaking,     setDeviceBrk] = useState('');  // empty = skip check
   const [result,             setResult]    = useState<CalculationResult | null>(null);
   const [learningMode,       setLM]        = useState(true);
 
@@ -60,6 +61,7 @@ export function ShortCircuit() {
       transformerImpedance: parseFloat(transformerImpedance),
       cableLength: parseFloat(cableLength), cableSize: parseFloat(cableSize),
       conductor, faultType, faultDuration: parseFloat(faultDuration), xrRatio: parseFloat(xrRatio),
+      deviceBreakingKA: deviceBreaking !== '' ? parseFloat(deviceBreaking) : undefined,
     });
     setResult(res);
     addCalculation({
@@ -107,6 +109,9 @@ export function ShortCircuit() {
           <FieldRow cols="1fr 1fr">
             <SelectInput label="Fault Type" value={faultType} onChange={(v) => setFaultType(v as '3ph'|'SLG'|'DL'|'EF')} options={FAULT_TYPES} tooltip="3-phase gives maximum fault current for equipment rating" />
             <TextInput label="Fault Clearing Time" value={faultDuration} onChange={setFaultDur} unit="s" min={0.02} max={5} step={0.05} tooltip="Time for the protective device to clear the fault" />
+          </FieldRow>
+          <FieldRow cols="1fr 1fr">
+            <TextInput label="Device Breaking Capacity Icu (blank = skip)" value={deviceBreaking} onChange={setDeviceBrk} unit="kA" min={0.5} max={150} step={0.5} tooltip="Prospective fault current the protective device must be rated to interrupt (IEC 60947-2 Icu). Leave blank to skip the breaking capacity check." />
           </FieldRow>
 
           <CalcButton onClick={calculate} label="Calculate Fault Current" icon={AlertTriangle} accentColor={ACCENT} />

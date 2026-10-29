@@ -75,7 +75,16 @@ interface ProjectInfo {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CABLE DATABASE  (IEC 60364-5-52, Method E — free air / cable tray, 30°C)
+// CABLE DATABASE
+// Source   : IEC 60364-5-52:2009/AMD1:2017, Annex B — Reference Method E
+//            (multi-core cable on perforated cable tray, free air)
+// Conditions: 30°C ambient air, single circuit in isolation (no grouping applied)
+// Conductor temperature: XLPE 90°C rated; PVC 70°C rated
+// Resistance: mΩ/m at maximum operating temperature (90°C XLPE, 70°C PVC)
+// Reactance:  fixed 0.08 mΩ/m (typical 50 Hz multi-core LV cable — use manufacturer data for large sizes)
+// Derating:   apply Ct (temperature) × Cg (grouping) × Ci (installation) per IEC 60364-5-52 Table B.52.14/17
+// Note: values are indicative. Verify against manufacturer datasheet for specific cable construction,
+//       armour type, number of loaded conductors, and local installation conditions.
 // ─────────────────────────────────────────────────────────────────────────────
 const SIZES = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300];
 

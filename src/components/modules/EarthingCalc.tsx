@@ -51,16 +51,24 @@ export function EarthingCalc() {
   const [conductor,       setCond]= useState<'Cu'|'GI'>('Cu');
   const [faultCurrent,    setFC]  = useState('20000');
   const [faultDuration,   setFD]  = useState('0.5');
-  const [earthPits,       setEP]  = useState('4');
-  const [pitDepth,        setPD]  = useState('3');
-  const [pitDiameter,     setPDiam]= useState('5');
-  const [result,          setResult]= useState<CalculationResult | null>(null);
-  const [learningMode,    setLM]  = useState(true);
+  const [earthPits,         setEP]    = useState('4');
+  const [pitDepth,          setPD]    = useState('3');
+  const [pitDiameter,       setPDiam] = useState('5');
+  const [surfaceRes,        setSurfRes] = useState('3000');  // crusher-run granite default
+  const [earthingSystem,    setES]    = useState<'TN-S'|'TN-C'|'TN-C-S'|'TT'|'IT'>('TN-S');
+  const [result,            setResult] = useState<CalculationResult | null>(null);
+  const [learningMode,      setLM]    = useState(true);
 
   const calculate = () => {
-    const res = calculateEarthing({ soilResistivity:parseFloat(soilResistivity), gridLength:parseFloat(gridLength), gridArea:parseFloat(gridArea), conductorSize:parseFloat(conductorSize), conductor, faultCurrent:parseFloat(faultCurrent), faultDuration:parseFloat(faultDuration), earthPits:parseInt(earthPits), pitDepth:parseFloat(pitDepth), pitDiameter:parseFloat(pitDiameter) });
+    const res = calculateEarthing({
+      soilResistivity: parseFloat(soilResistivity), gridLength: parseFloat(gridLength),
+      gridArea: parseFloat(gridArea), conductorSize: parseFloat(conductorSize), conductor,
+      faultCurrent: parseFloat(faultCurrent), faultDuration: parseFloat(faultDuration),
+      earthPits: parseInt(earthPits), pitDepth: parseFloat(pitDepth), pitDiameter: parseFloat(pitDiameter),
+      surfaceResistivity: parseFloat(surfaceRes), earthingSystem,
+    });
     setResult(res);
-    addCalculation({ type:'earthing', title:`Earthing — ρ=${soilResistivity}Ω·m, If=${parseInt(faultCurrent)/1000}kA`, inputs:{ soilResistivity, gridLength, gridArea, conductorSize, conductor, faultCurrent, faultDuration, earthPits, pitDepth }, results:res, notes:'', standard:'IEEE 80' });
+    addCalculation({ type:'earthing', title:`Earthing — ρ=${soilResistivity}Ω·m, If=${parseInt(faultCurrent)/1000}kA`, inputs:{ soilResistivity, gridLength, gridArea, conductorSize, conductor, faultCurrent, faultDuration, earthPits, pitDepth, surfaceResistivity: surfaceRes, earthingSystem }, results:res, notes:'', standard:'IEEE 80:2013' });
   };
 
   const handlePDF = () => {
@@ -91,14 +99,20 @@ export function EarthingCalc() {
             <TextInput label="Pit Diameter" value={pitDiameter} onChange={setPDiam} unit="cm" min={2} max={20} step={1} tooltip="Electrode diameter — typical: 5 cm for 50mm Cu rod" />
           </FieldRow>
 
+          <SectionLabel title="Surface Treatment" />
+          <FieldRow cols="1fr 1fr">
+            <TextInput label="Surface Layer Resistivity (ρs)" value={surfaceRes} onChange={setSurfRes} unit="Ω·m" min={1} tooltip="Resistivity of crushed rock, gravel, or concrete surface layer — used in IEEE 80 Eq. (29)/(32) tolerable voltage calculation. Typical: 3000 Ω·m crusher-run granite, 10000 Ω·m dry concrete, use soil ρ if no surface treatment." />
+            <SelectInput label="Earthing System" value={earthingSystem} onChange={(v) => setES(v as 'TN-S'|'TN-C'|'TN-C-S'|'TT'|'IT')} options={[{ value:'TN-S', label:'TN-S — separate PE + N' },{ value:'TN-C', label:'TN-C — combined PEN' },{ value:'TN-C-S', label:'TN-C-S — split downstream' },{ value:'TT', label:'TT — independent earth electrode' },{ value:'IT', label:'IT — unearthed / impedance earthed' }]} tooltip="Determines fault current path, disconnection time requirements and applicable IEC 60364-4-41 clauses" />
+          </FieldRow>
+
           <SectionLabel title="Conductor & Fault Data" />
           <FieldRow cols="1fr 1fr">
-            <SelectInput label="Conductor Material" value={conductor} onChange={(v) => setCond(v as 'Cu'|'GI')} options={[{ value:'Cu', label:'Copper — k=226' },{ value:'GI', label:'Galv. Iron — k=80' }]} />
-            <TextInput label="Conductor Size" value={conductorSize} onChange={setCS} unit="mm²" min={16} tooltip="Earth conductor cross-sectional area" />
+            <SelectInput label="Conductor Material" value={conductor} onChange={(v) => setCond(v as 'Cu'|'GI')} options={[{ value:'Cu', label:'Copper — k=226 (IEEE 80 Eq. 37)' },{ value:'GI', label:'Galv. Iron — k=80 (IEEE 80 Eq. 37)' }]} />
+            <TextInput label="Conductor Size" value={conductorSize} onChange={setCS} unit="mm²" min={16} tooltip="Earth conductor cross-sectional area — must satisfy A_min from thermal withstand formula" />
           </FieldRow>
           <FieldRow cols="1fr 1fr">
-            <TextInput label="Earth Fault Current" value={faultCurrent} onChange={setFC} unit="A" min={100} tooltip="Maximum single-phase-to-earth fault current" />
-            <TextInput label="Fault Duration" value={faultDuration} onChange={setFD} unit="s" min={0.01} max={5} step={0.05} tooltip="Protection device operating time — governs conductor thermal sizing" />
+            <TextInput label="Earth Fault Current" value={faultCurrent} onChange={setFC} unit="A" min={100} tooltip="Maximum single-phase-to-earth fault current at this grid location" />
+            <TextInput label="Fault Duration" value={faultDuration} onChange={setFD} unit="s" min={0.01} max={5} step={0.05} tooltip="Protection device operating time — governs conductor thermal sizing and tolerable voltage" />
           </FieldRow>
 
           <CalcButton onClick={calculate} label="Calculate Earthing System" icon={CloudLightning} accentColor={ACCENT} />
