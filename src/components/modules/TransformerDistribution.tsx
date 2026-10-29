@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload } from 'lucide-react';
+import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload, Copy } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ const earthSize = (I: number, t: number, insul: 'PVC' | 'XLPE') => {
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
 const defaultXfmr: TransformerConfig = {
-  id: '1', kva: 1000, primaryKV: 11, secondaryV: 415,
+  id: '1', kva: 1000, primaryKV: 11, secondaryV: 400,
   phases: 3, frequency: 50, impedancePct: 6, targetPF: 0.95,
   permittedLoadingPct: 80, ambientTemp: 40, type: 'oil',
   numTransformers: 1, config: 'single', existingLoadKVA: 0,
@@ -137,7 +137,7 @@ const defaultXfmr: TransformerConfig = {
 const defaultFeeder = (): Feeder => ({
   id: Date.now().toString(),
   feederNo: '', dbName: '', description: '',
-  quantity: 1, ratedKW: 10, voltage: 415, phases: 3,
+  quantity: 1, ratedKW: 10, voltage: 400, phases: 3,
   powerFactor: 0.85, efficiency: 0.92,
   loadType: 'motor', demandFactor: 0.8, diversityFactor: 1.0, utilizationFactor: 0.85,
   startingMethod: 'DOL', startingCurrentMult: 6, isExisting: false,
@@ -305,8 +305,13 @@ export function TransformerDistribution() {
   }, [feeders, xfmr]);
 
   // ── Feeder handlers ──
+  const nextFeederNo = (list: Feeder[]) => `F${String(list.length + 1).padStart(2, '0')}`;
+
   const addFeeder = () => {
-    setFeeders(prev => [...prev, { ...newFeeder, id: Date.now().toString(), feederNo: `F${prev.length + 1}` }]);
+    setFeeders(prev => {
+      const feederNo = newFeeder.feederNo.trim() || nextFeederNo(prev);
+      return [...prev, { ...newFeeder, id: Date.now().toString(), feederNo }];
+    });
     setNewFeeder(defaultFeeder());
     setIsAdding(false);
   };
@@ -317,6 +322,13 @@ export function TransformerDistribution() {
     if (!editFeeder) return;
     setFeeders(prev => prev.map(f => f.id === editFeeder.id ? editFeeder : f));
     setEditFeeder(null);
+  };
+
+  const copyFeeder = (f: Feeder) => {
+    setFeeders(prev => {
+      const feederNo = nextFeederNo(prev);
+      return [...prev, { ...f, id: Date.now().toString(), feederNo }];
+    });
   };
 
   // ── CSV Export ──
@@ -351,7 +363,7 @@ export function TransformerDistribution() {
       'Num Runs', 'Ambient Temp (°C)', 'Group Size',
     ];
     const sample = [
-      'F01', 'MDB', 'Air Handling Unit', 1, 22, 415,
+      'F01', 'MDB', 'Air Handling Unit', 1, 22, 400,
       3, 0.85, 0.95, 'motor',
       0.8, 1.0, 0.85,
       'Star-Delta', 6, 'no',
@@ -396,7 +408,7 @@ export function TransformerDistribution() {
           description:        str('Description'),
           quantity:           num('Quantity', 1),
           ratedKW:            num('Rated kW', 1),
-          voltage:            num('Voltage (V)', 415),
+          voltage:            num('Voltage (V)', 400),
           phases,
           powerFactor:        Math.min(1, Math.max(0.5, num('Power Factor', 0.85))),
           efficiency:         Math.min(1, Math.max(0.5, num('Efficiency', 0.95))),
@@ -642,7 +654,7 @@ export function TransformerDistribution() {
                   onChange={importFromExcel}
                 />
                 <button
-                  onClick={() => { setIsAdding(!isAdding); setNewFeeder(defaultFeeder()); }}
+                  onClick={() => { setIsAdding(v => !v); setNewFeeder({ ...defaultFeeder(), feederNo: nextFeederNo(feeders) }); }}
                   style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#3B82F6', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
                 >
                   <Plus style={{ width: 14, height: 14 }} /> Add Feeder
@@ -701,7 +713,7 @@ export function TransformerDistribution() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: 'var(--ec-bg-surface)', borderBottom: '2px solid var(--ec-border)' }}>
-                    {['No.', 'DB', 'Description', 'Qty', 'kW', 'PF', 'V', 'Ph', 'DF', 'UF', 'Load Type', 'Length', 'Conductor', 'Edit', 'Del'].map(h => (
+                    {['No.', 'DB', 'Description', 'Qty', 'kW', 'PF', 'V', 'Ph', 'DF', 'UF', 'Load Type', 'Length', 'Conductor', 'Actions'].map(h => (
                       <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'var(--ec-text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -725,21 +737,24 @@ export function TransformerDistribution() {
                         <td style={{ padding: '7px 10px' }}><span style={{ fontSize: 10, background: '#3B82F633', color: '#3B82F6', borderRadius: 4, padding: '2px 6px' }}>{f.loadType}</span></td>
                         <td style={{ padding: '7px 10px' }}>{f.cableLength}m</td>
                         <td style={{ padding: '7px 10px' }}>{f.conductor}/{f.insulation}</td>
-                        <td style={{ padding: '7px 10px' }}>
-                          {isEdit ? (
-                            <button onClick={saveEdit} style={{ background: '#22C55E', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 11 }}>
-                              <Check style={{ width: 11, height: 11 }} />
+                        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            {isEdit ? (
+                              <button onClick={saveEdit} title="Save" style={{ background: '#22C55E', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
+                                <Check style={{ width: 11, height: 11 }} />
+                              </button>
+                            ) : (
+                              <button onClick={() => setEditFeeder({ ...f })} title="Edit" style={{ background: 'var(--ec-bg-root)', color: 'var(--ec-text-muted)', border: '1px solid var(--ec-border)', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
+                                <Edit2 style={{ width: 11, height: 11 }} />
+                              </button>
+                            )}
+                            <button onClick={() => copyFeeder(f)} title="Copy (same spec, new number)" style={{ background: '#F59E0B22', color: '#F59E0B', border: '1px solid #F59E0B44', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
+                              <Copy style={{ width: 11, height: 11 }} />
                             </button>
-                          ) : (
-                            <button onClick={() => setEditFeeder({ ...f })} style={{ background: 'var(--ec-bg-root)', color: 'var(--ec-text-muted)', border: '1px solid var(--ec-border)', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
-                              <Edit2 style={{ width: 11, height: 11 }} />
+                            <button onClick={() => deleteFeeder(f.id)} title="Delete" style={{ background: '#EF444422', color: '#EF4444', border: '1px solid #EF444433', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
+                              <Trash2 style={{ width: 11, height: 11 }} />
                             </button>
-                          )}
-                        </td>
-                        <td style={{ padding: '7px 10px' }}>
-                          <button onClick={() => deleteFeeder(f.id)} style={{ background: '#EF444422', color: '#EF4444', border: '1px solid #EF444433', borderRadius: 4, padding: '3px 8px', cursor: 'pointer' }}>
-                            <Trash2 style={{ width: 11, height: 11 }} />
-                          </button>
+                          </div>
                         </td>
                       </tr>
                     );
