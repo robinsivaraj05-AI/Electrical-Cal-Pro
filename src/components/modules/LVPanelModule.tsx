@@ -1303,7 +1303,7 @@ function FeederCable() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Table — layout matches source workbook: Serial | Source | Load Details | Area | Users | kW | OG Breaker | Breaker Size | Cable Type | Length */}
       {visible.length === 0
         ? <EmptyState icon={Cable} title="No feeders match filters" sub={feeders.length === 0 ? 'Click "Add Feeder" or import from Excel.' : 'Clear filters to see all feeders.'} />
         : (
@@ -1311,8 +1311,15 @@ function FeederCable() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
               <thead>
                 <tr>
-                  {['S/N','Ref','From','To','Description','Area','kW','Type','Runs','Size mm²','Cores','Req L(m)','Act L(m)','Δ L(m)','Earth','Breaker','Install Status','Field Verify','Insp. Remarks','Actions'].map(h => (
-                    <th key={h} style={TH}>{h}</th>
+                  {[
+                    'S/N', 'Source\n(From Panel)', 'Load Details\n(Description)', 'Area',
+                    'Users\n(To Panel / Equipment)', 'kW',
+                    'OG Breaker\n(Type)', 'Breaker Size\n(Rating)',
+                    'Cable Type', 'Req. Length\n(m)', 'Act. Length\n(m)', 'Δ L (m)',
+                    'Cable Size\n(mm²)', 'Cores × Runs',
+                    'Install Status', 'Field Verify', 'Actions',
+                  ].map(h => (
+                    <th key={h} style={{ ...TH, whiteSpace: 'pre-line', minWidth: h.includes('Description') ? 140 : undefined }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1322,31 +1329,50 @@ function FeederCable() {
                   const statusColor = FEEDER_STATUS_COLOR[f.installationStatus] ?? '#64748B';
                   return (
                     <tr key={f.id} style={{ background: i % 2 ? 'var(--ec-bg-surface)' : 'transparent' }}>
-                      <td style={td({ color: 'var(--ec-text-muted)' })}>{f.serialNo}</td>
-                      <td style={td({ color: ACCENT, fontWeight: 700, whiteSpace: 'nowrap' })}>{f.feederRef}</td>
-                      <td style={td({ fontWeight: 600, whiteSpace: 'nowrap' })}>{f.fromPanel}</td>
-                      <td style={td({ fontWeight: 600, whiteSpace: 'nowrap' })}>{f.toPanel}</td>
-                      <td style={td({ minWidth: 130 })}>{f.description}</td>
+                      {/* S/N */}
+                      <td style={td({ color: 'var(--ec-text-muted)', textAlign: 'center' })}>{f.serialNo || String(i + 1).padStart(2, '0')}</td>
+                      {/* Source */}
+                      <td style={td({ color: ACCENT, fontWeight: 700, whiteSpace: 'nowrap' })}>{f.fromPanel}</td>
+                      {/* Load Details */}
+                      <td style={td({ minWidth: 140 })}>
+                        <div style={{ fontWeight: 600 }}>{f.description}</div>
+                        {f.feederRef && <div style={{ fontSize: 10, color: 'var(--ec-text-muted)' }}>{f.feederRef}</div>}
+                      </td>
+                      {/* Area */}
                       <td style={td()}>{f.area}</td>
-                      <td style={td({ textAlign: 'right' })}>{f.loadKW}</td>
-                      <td style={td({ whiteSpace: 'nowrap' })}>{f.cableType}</td>
-                      <td style={td({ textAlign: 'center' })}>×{f.numRuns}</td>
-                      <td style={td({ textAlign: 'right', fontWeight: 600 })}>{f.cableSize}</td>
-                      <td style={td({ textAlign: 'center' })}>{f.numCores}C</td>
+                      {/* Users / Destination */}
+                      <td style={td({ fontWeight: 600, whiteSpace: 'nowrap' })}>{f.toPanel}</td>
+                      {/* kW */}
+                      <td style={td({ textAlign: 'right', fontWeight: 600 })}>{f.loadKW || '—'}</td>
+                      {/* OG Breaker type */}
+                      <td style={td({ whiteSpace: 'nowrap' })}>{f.breakerType || '—'}</td>
+                      {/* Breaker Size */}
+                      <td style={td({ whiteSpace: 'nowrap', fontWeight: 600 })}>
+                        {f.breakerRating ? `${f.breakerRating}A ${f.breakerType}` : '—'}
+                      </td>
+                      {/* Cable Type */}
+                      <td style={td({ whiteSpace: 'nowrap' })}>{f.cableType || '—'}</td>
+                      {/* Required Length */}
                       <td style={td({ textAlign: 'right' })}>{f.requiredLengthM || '—'}</td>
+                      {/* Actual Length */}
                       <td style={td({ textAlign: 'right' })}>{f.actualLengthM || '—'}</td>
+                      {/* Δ Length */}
                       <td style={td({ textAlign: 'right', fontWeight: 600, color: lenDiff === null ? 'inherit' : lenDiff >= 0 ? '#22C55E' : '#EF4444' })}>
                         {lenDiff === null ? '—' : `${lenDiff >= 0 ? '+' : ''}${lenDiff.toFixed(1)}`}
                       </td>
-                      <td style={td()}>{f.earthingCableSize}</td>
-                      <td style={td({ whiteSpace: 'nowrap' })}>{f.breakerType} {f.breakerRating}A</td>
+                      {/* Cable Size */}
+                      <td style={td({ textAlign: 'right', fontWeight: 600 })}>{f.cableSize || '—'}</td>
+                      {/* Cores × Runs */}
+                      <td style={td({ textAlign: 'center' })}>{f.numCores}C × {f.numRuns}</td>
+                      {/* Install Status */}
                       <td style={td()}>
                         <span style={{ background: statusColor + '22', color: statusColor, border: `1px solid ${statusColor}55`, borderRadius: 6, padding: '2px 7px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>
                           {f.installationStatus}
                         </span>
                       </td>
+                      {/* Field Verify */}
                       <td style={td()}><StatusBadge status={f.fieldVerificationStatus} /></td>
-                      <td style={td({ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{f.inspectionRemarks}</td>
+                      {/* Actions */}
                       <td style={td()}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button onClick={() => openEdit(f)} style={btn(ACCENT, { padding: '4px 8px' })}><Pencil style={{ width: 11, height: 11 }} /></button>
@@ -3114,9 +3140,12 @@ function classifySheet(name: string, headers: string[], rowCount: number): { typ
   // Panel Register
   if (nm.includes('panel reg') || nm.includes('board sched') || (hn.some(h => h.includes('panel id') || h.includes('board ref')) && !hn.some(h => h.includes('circuit'))))
     return { type: 'Panel Register', confidence: hn.some(h => h.includes('panel id')) ? 'High' : 'Medium' };
-  // Feeder/Cable
-  if (nm.includes('cable') || nm.includes('feeder') || hn.some(h => h === 'from' || h.includes('from panel')))
-    return { type: 'Feeder/Cable', confidence: hn.some(h => h === 'from' || h.includes('from panel')) ? 'High' : 'Medium' };
+  // Feeder/Cable — standard or workbook-style (Source / Load Details / Users / k / OG Breaker / Breaker Size)
+  const feederByHeaders = hn.some(h => h === 'from' || h.includes('from panel') || h === 'source')
+    && hn.some(h => h === 'to' || h.includes('to panel') || h === 'users' || h === 'user');
+  const feederByWorkbook = hn.some(h => h.includes('load details') || h.includes('og breaker') || h.includes('breaker size'));
+  if (nm.includes('cable') || nm.includes('feeder') || feederByHeaders || feederByWorkbook)
+    return { type: 'Feeder/Cable', confidence: (feederByHeaders || feederByWorkbook || nm.includes('feeder')) ? 'High' : 'Medium' };
   // Load Schedule — sheet named like a panel or has circuit column
   if (panelPattern.test(name) || hn.some(h => h.includes('circuit') || h.includes('load name') || h.includes('load desc')))
     return { type: 'Load Schedule', confidence: panelPattern.test(name) ? 'High' : 'Medium' };
@@ -3182,33 +3211,54 @@ function parseExcel(data: ArrayBuffer): ParseResult {
       classified.flags.push(`${added} panel record(s) parsed`);
 
     } else if (type === 'Feeder/Cable') {
-      const iRef = colMatch(headers, 'Cable Ref', 'Feeder Ref', 'Cable No', 'Ref');
-      const iFrom = colMatch(headers, 'From', 'Source', 'From Panel');
-      const iTo = colMatch(headers, 'To', 'Destination', 'To Panel');
-      const iKW = colMatch(headers, 'kW', 'Load kW', 'kilo');
-      const iSize = colMatch(headers, 'Size', 'Cable Size', 'mm²', 'mm2');
-      const iLen = colMatch(headers, 'Length', 'Run', 'Route');
-      const iBreaker = colMatch(headers, 'Breaker', 'OCPD', 'Rating');
-      const iDesc = colMatch(headers, 'Description', 'Load Description');
+      // Supports both standard and workbook-style headers:
+      // Standard: Feeder Ref | From | To | Description | Area | kW | Cable Size | Length | Breaker
+      // Workbook: Serial | Source | Load Details | Area | Users | k | OG Breaker | Breaker Size
+      const iRef  = colMatch(headers, 'Cable Ref', 'Feeder Ref', 'Cable No', 'Ref');
+      const iFrom = colMatch(headers, 'Source', 'From Panel', 'From', 'Source Panel');
+      const iTo   = colMatch(headers, 'Users', 'To Panel', 'To', 'Destination', 'User');
+      const iDesc = colMatch(headers, 'Load Details', 'Description', 'Load Description');
       const iArea = colMatch(headers, 'Area', 'Zone', 'Location');
-      const iSN = colMatch(headers, 'S/N', 'Serial', 'No.');
+      const iKW   = colMatch(headers, ' k', 'kW', 'Load kW', 'kilo');   // leading space catches standalone "k" col
+      const iSize = colMatch(headers, 'Cable Size', 'Size', 'mm²', 'mm2');
+      const iType = colMatch(headers, 'Cable Type', 'Type');
+      const iLen  = colMatch(headers, 'Length', 'Run', 'Route', 'Cable Length');
+      const iOGBreaker = colMatch(headers, 'OG Breaker', 'OG_Breaker', 'Outgoing Breaker');
+      const iBreakerSize = colMatch(headers, 'Breaker Size', 'Breaker Rating', 'Breaker');
+      const iSN   = colMatch(headers, 'Serial', 'S/N', 'Serial No', 'No.');
+
+      // Fallback for standalone "k" column (exact match)
+      const kColIdx = iKW >= 0 ? iKW : headers.findIndex(h => h.trim() === 'k');
 
       let added = 0;
       for (const row of rows) {
         const fromPanel = cell(row, iFrom, headers);
-        const toPanel = cell(row, iTo, headers);
+        const toPanel   = cell(row, iTo, headers);
         if (!fromPanel && !toPanel) continue;
+        // Skip header-repeat rows
+        const desc = cell(row, iDesc, headers);
+        if (desc.toLowerCase() === 'load details' || desc.toLowerCase() === 'description') continue;
+
         const feederRef = cell(row, iRef, headers) || `F${String(result.feeders.length + 1).padStart(3, '0')}`;
+        const rawKW  = kColIdx >= 0 ? cell(row, kColIdx, headers) : cell(row, iKW, headers);
         const rawLen = Number(cell(row, iLen, headers)) || 0;
+
+        // Parse "Breaker Size" like "630A MCCB" or "1000A_ACB" → rating + type
+        const bSizeRaw = cell(row, iBreakerSize, headers);
+        const bMatch   = bSizeRaw.match(/^(\d+)\s*[A_]?\s*([A-Z]+)$/i);
+        const bRating  = bMatch ? Number(bMatch[1]) : (Number(cell(row, iBreakerSize, headers)) || 0);
+        const bType    = bMatch ? bMatch[2].toUpperCase() : (cell(row, iOGBreaker, headers) || 'MCCB');
+
         result.feeders.push({
           feederRef, fromPanel, toPanel, serialNo: cell(row, iSN, headers),
-          description: cell(row, iDesc, headers), area: cell(row, iArea, headers),
-          loadKW: Number(cell(row, iKW, headers)) || 0,
+          description: desc, area: cell(row, iArea, headers),
+          loadKW: Number(rawKW.replace(/[^0-9.]/g, '')) || 0,
           loadPF: 0.85, phases: 3, voltage: 400, designCurrentA: 0,
-          cableSize: cell(row, iSize, headers), cableType: '', numCores: 4,
-          requiredLengthM: rawLen, actualLengthM: 0,
-          numRuns: 1, breakerRating: Number(cell(row, iBreaker, headers)) || 0,
-          breakerType: 'MCCB', demandFactor: 1, earthingCableSize: '',
+          cableSize: cell(row, iSize, headers),
+          cableType: cell(row, iType, headers),
+          numCores: 4, requiredLengthM: rawLen, actualLengthM: 0,
+          numRuns: 1, breakerRating: bRating, breakerType: bType,
+          demandFactor: 1, earthingCableSize: '',
           installationStatus: 'Not Started', fieldVerificationStatus: 'Pending',
           inspectionRemarks: '', remarks: '',
         });
