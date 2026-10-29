@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload, Copy, FolderOpen, Save, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload, Copy, FolderOpen, Save, RefreshCw, ExternalLink } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useStore } from '../../store/useStore';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -164,15 +165,16 @@ const defaultFeeder = (): Feeder => ({
 // ─── Styling helpers ──────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'dashboard',    label: 'Dashboard',       icon: LayoutDashboard },
-  { id: 'transformer',  label: 'Transformer',      icon: Zap },
-  { id: 'loads',        label: 'Load Entry',       icon: Plus },
-  { id: 'cables',       label: 'Cable Sizing',     icon: Cable },
-  { id: 'breakers',     label: 'Breaker Selection',icon: Shield },
-  { id: 'capacitor',    label: 'Capacitor Bank',   icon: Battery },
-  { id: 'shortcircuit', label: 'Short Circuit',    icon: AlertTriangle },
-  { id: 'schedule',     label: 'Feeder Schedule',  icon: FileText },
-  { id: 'iec',          label: 'IEC Library',      icon: BookOpen },
+  { id: 'dashboard',    label: 'Dashboard',        icon: LayoutDashboard },
+  { id: 'transformer',  label: 'Transformer',       icon: Zap },
+  { id: 'loads',        label: 'Load Entry',        icon: Plus },
+  { id: 'cables',       label: 'Cable Sizing',      icon: Cable },
+  { id: 'breakers',     label: 'Breaker Selection', icon: Shield },
+  { id: 'capacitor',    label: 'Capacitor Bank',    icon: Battery },
+  { id: 'shortcircuit', label: 'Short Circuit',     icon: AlertTriangle },
+  { id: 'schedule',     label: 'Feeder Schedule',   icon: FileText },
+  { id: 'iec',          label: 'IEC Library',       icon: BookOpen },
+  { id: 'crossverify',  label: 'Cross Verify',      icon: ExternalLink },
 ];
 
 const card = (extra?: React.CSSProperties): React.CSSProperties => ({
@@ -262,6 +264,7 @@ function CalcBox({ formula, substituted, result }: { formula: string; substitute
 export function TransformerDistribution() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [xfmr, setXfmr] = useState<TransformerConfig>(defaultXfmr);
+  const { setActiveModule } = useStore();
   const [feeders, setFeeders] = useState<Feeder[]>([]);
   const [editFeeder, setEditFeeder] = useState<Feeder | null>(null);
   const [isAdding, setIsAdding] = useState(false);
@@ -606,13 +609,13 @@ export function TransformerDistribution() {
           return (
             <button
               key={t.id}
-              onClick={() => setActiveTab(t.id)}
+              onClick={() => t.id === 'crossverify' ? setActiveModule('transformer-verify') : setActiveTab(t.id)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '7px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600,
-                border: 'none', cursor: 'pointer',
-                background: active ? '#3B82F6' : 'var(--ec-bg-surface)',
-                color: active ? '#fff' : 'var(--ec-text-muted)',
+                border: t.id === 'crossverify' ? '1px solid #6366F155' : 'none', cursor: 'pointer',
+                background: t.id === 'crossverify' ? '#6366F122' : active ? '#3B82F6' : 'var(--ec-bg-surface)',
+                color: t.id === 'crossverify' ? '#A78BFA' : active ? '#fff' : 'var(--ec-text-muted)',
                 boxShadow: active ? '0 2px 8px rgba(59,130,246,0.35)' : 'none',
               }}
             >
@@ -1255,6 +1258,31 @@ export function TransformerDistribution() {
       {/* ── TAB: IEC LIBRARY ───────────────────────────────────────────────── */}
       {activeTab === 'iec' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Cross Verification shortcut */}
+          <div style={{ ...card(), background: 'linear-gradient(135deg,#0F172A,#1E3A5F)', border: '1px solid #1D4ED833', display: 'flex', alignItems: 'center', gap: 20 }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, background: 'rgba(99,102,241,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid rgba(99,102,241,0.4)' }}>
+              <Shield style={{ width: 26, height: 26, color: '#A78BFA' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#F8FAFC', letterSpacing: '-0.01em' }}>IEC Cross Verification Dashboard</div>
+              <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 4 }}>
+                Independently verify your distribution design against IEC 60076, IEC 60364, IEC 60947-2, IEC 60831 — with Excel multi-load upload and downloadable report.
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                {['IEC 60076 — Transformer Loading', 'IEC 60364-5-52 — Cable Ampacity & VD', 'IEC 60364-4-43 — OC Protection', 'IEC 60947-2 — Breaking Capacity', 'IEC 60364-5-54 — Earth Conductor', 'IEC 60831-1 — Capacitor Bank'].map(s => (
+                  <span key={s} style={{ fontSize: 10, background: 'rgba(99,102,241,0.2)', color: '#A78BFA', borderRadius: 4, padding: '2px 8px', fontWeight: 600 }}>{s}</span>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveModule('transformer-verify')}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 20px', background: '#6366F1', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+            >
+              Open <ExternalLink style={{ width: 14, height: 14 }} />
+            </button>
+          </div>
+
           <div style={card()}>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Applicable IEC Standards</div>
             <div style={{ overflowX: 'auto' }}>
