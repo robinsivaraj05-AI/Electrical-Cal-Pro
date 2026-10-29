@@ -300,130 +300,183 @@ export function calculateCableSizing(inputs: {
 
 // ─── Short Circuit ─────────────────────────────────────────────────────────────
 export function calculateShortCircuit(inputs: {
-  voltage: number;         // kV
+  voltage: number;              // kV (line-to-line)
   transformerMVA: number;
   transformerImpedance: number; // %
-  cableLength: number;     // m
-  cableSize: number;       // mm²
+  cableLength: number;          // m
+  cableSize: number;            // mm²
   conductor: 'Cu' | 'Al';
   faultType: '3ph' | 'SLG' | 'DL' | 'EF';
-  faultDuration: number;   // seconds
+  faultDuration: number;        // s
   xrRatio: number;
 }): CalculationResult {
   const { voltage, transformerMVA, transformerImpedance, cableLength, cableSize, conductor, faultType, faultDuration, xrRatio } = inputs;
 
-  const Vn = voltage * 1000; // V
-  const c = 1.05; // voltage factor for max fault current (IEC 60909 Table 1)
+  const Vn  = voltage * 1000;         // V line-to-line
+  const Vph = Vn / Math.sqrt(3);      // V phase-to-neutral
+  const c   = 1.05;                   // voltage factor — IEC 60909 Table 1 (Un ≤ 1 kV, c_max)
 
-  // Transformer impedance
+  // ── Transformer positive-sequence impedance ────────────────────────────────
   const Zbase = (Vn ** 2) / (transformerMVA * 1e6);
-  const Zt = (transformerImpedance / 100) * Zbase;
-  const Rt = Zt / Math.sqrt(1 + xrRatio ** 2);
-  const Xt2 = Zt * xrRatio / Math.sqrt(1 + xrRatio ** 2);
+  const Zt    = (transformerImpedance / 100) * Zbase;
+  const Rt    = Zt / Math.sqrt(1 + xrRatio ** 2);
+  const Xt    = Zt * xrRatio / Math.sqrt(1 + xrRatio ** 2);
 
-  // Cable impedance (at 20°C for max short-circuit per IEC 60909)
-  const cableResPerKm = conductor === 'Cu' ? 17500 / (56000 * cableSize) * 1000 : 17500 / (34000 * cableSize) * 1000;
-  const Rc = (cableResPerKm * cableLength) / 1000;
-  const Xc = (0.08 * cableLength) / 1000; // Typical reactance 0.08 Ω/km
+  // ── Cable positive-sequence resistance at 20°C (IEC 60909 §2.5) ──────────
+  // R [Ω/km] = 1000 / (σ [S·m/mm²] × S [mm²])
+  // Cu at 20°C: σ = 56 S·m/mm²  →  1 mm² gives 17.86 Ω/km  (IEC 60228)
+  // Al at 20°C: σ = 34 S·m/mm²  →  1 mm² gives 29.41 Ω/km
+  const sigma     = conductor === 'Cu' ? 56.0 : 34.0;
+  const cableR_km = 1000 / (sigma * cableSize);           // Ω/km at 20°C
+  const Rc        = (cableR_km * cableLength) / 1000;     // Ω
+  const Xc        = (0.08 * cableLength) / 1000;          // Ω  (0.08 Ω/km typical for LV power cable)
 
-  const Ztotal = Math.sqrt((Rt + Rc) ** 2 + (Xt2 + Xc) ** 2);
+  // ── PE / protective conductor size (IEC 60364-5-54 Table 54.2) ───────────
+  const Spe  = cableSize <= 16 ? cableSize : cableSize <= 35 ? 16 : cableSize / 2;
+  const Rpe  = (1000 / (sigma * Spe) * cableLength) / 1000; // Ω
 
-  // 3-phase fault current
-  let Ik3 = (c * Vn) / (Math.sqrt(3) * Ztotal);
-  let Ik = Ik3;
+  // ── Total positive-sequence impedance ─────────────────────────────────────
+  const R1 = Rt + Rc;
+  const X1 = Xt + Xc;
+  const Z1 = Math.sqrt(R1 ** 2 + X1 ** 2);
+  const XR = X1 / R1;
 
-  if (faultType === 'SLG') {
-    // Single line to ground (simplified, assuming Z1=Z2)
-    Ik = (3 * c * Vn) / (Math.sqrt(3) * (3 * Ztotal));
-  } else if (faultType === 'DL') {
-    // Double line fault: I_k2 = (√3/2) × I_k3
+  // ── 3-phase fault — reference value ───────────────────────────────────────
+  const Ik3 = (c * Vn) / (Math.sqrt(3) * Z1);   // IEC 60909 Eq. 29
+
+  // ── Zero-sequence impedance (Dyn11 transformer, TN-S cable) ──────────────
+  // Z0_tx = Zt (delta winding limits Z0 to leakage); Z0_cable includes PE return:
+  //   R0 = Rt + Rc + 2·Rpe   X0 ≈ Xt + Xc + 2·Xc
+  const R0 = Rt + Rc + 2 * Rpe;
+  const X0 = Xt + Xc + 2 * Xc;
+  const Z0 = Math.sqrt(R0 ** 2 + X0 ** 2);
+
+  // ── Fault-type specific current ───────────────────────────────────────────
+  let Ik: number;
+  let faultFormula: string;
+  let faultStepDesc: string;
+  let faultStepResult: string;
+
+  if (faultType === 'DL') {
+    // Line-to-line fault: I"k2 = (√3/2)·I"k3  (IEC 60909 Eq. 31)
     Ik = Ik3 * (Math.sqrt(3) / 2);
+    faultFormula   = 'I"k2 = (√3/2) · I"k3';
+    faultStepDesc  = 'Line-to-line fault current (IEC 60909 Eq. 31)';
+    faultStepResult = `${(Ik/1000).toFixed(3)} kA  [= 0.866 × ${(Ik3/1000).toFixed(3)} kA]`;
+  } else if (faultType === 'SLG') {
+    // Single line-to-ground: I"k1 = √3·c·Un / |2·Z1 + Z0|  (IEC 60909 Eq. 35, Z2 = Z1)
+    const mag = Math.sqrt((2*R1 + R0)**2 + (2*X1 + X0)**2);
+    Ik = (Math.sqrt(3) * c * Vn) / mag;
+    faultFormula   = 'I"k1 = √3·c·Un / |2·Z1 + Z0|';
+    faultStepDesc  = 'Single line-to-ground fault (IEC 60909 Eq. 35, Z2 = Z1)';
+    faultStepResult = `${(Ik/1000).toFixed(3)} kA  [|2Z1+Z0| = ${mag.toFixed(4)} Ω, Z0 = ${Z0.toFixed(4)} Ω]`;
+  } else if (faultType === 'EF') {
+    // Earth fault — loop impedance method (IEC 60364-4-41 / BS 7671):
+    // Ief = c·Vph / Z_loop   where Z_loop = Z_source + Z_phase_cable + Z_PE_cable
+    const R_loop = Rt + Rc + Rpe;
+    const X_loop = Xt + Xc + Xc;     // PE reactance ≈ phase cable reactance
+    const Z_loop = Math.sqrt(R_loop ** 2 + X_loop ** 2);
+    Ik = (c * Vph) / Z_loop;
+    faultFormula   = 'Ief = c·Vph / Z_loop   (phase–PE loop impedance)';
+    faultStepDesc  = `Earth fault via PE (IEC 60364-4-41), Spe = ${Spe} mm²`;
+    faultStepResult = `${(Ik/1000).toFixed(3)} kA  [Vph = ${Vph.toFixed(1)} V, Z_loop = ${Z_loop.toFixed(4)} Ω]`;
+  } else {
+    // 3-phase symmetrical: I"k3 = c·Un / (√3·Z1)  (IEC 60909 Eq. 29)
+    Ik = Ik3;
+    faultFormula   = 'I"k3 = c·Un / (√3·Z1)';
+    faultStepDesc  = '3-phase symmetrical fault current (IEC 60909 Eq. 29)';
+    faultStepResult = `${(Ik/1000).toFixed(3)} kA`;
   }
 
   const IkKA = Ik / 1000;
 
-  // Peak current (IEC 60909 Section 4.3)
-  const XR = (Xt2 + Xc) / (Rt + Rc);
+  // ── Peak current (IEC 60909 Eq. 52) ───────────────────────────────────────
   const kappa = 1.02 + 0.98 * Math.exp(-3 / XR);
-  const Ip = kappa * Math.sqrt(2) * Ik;
-  const IpKA = Ip / 1000;
+  const Ip    = kappa * Math.sqrt(2) * Ik;
+  const IpKA  = Ip / 1000;
 
-  // Thermal equivalent current (for cable withstand check)
-  const Ith = Ik * Math.sqrt(faultDuration);
-  const IthKA = Ith / 1000;
-
-  // Cable thermal withstand (IEC 60364-5-54 adiabatic)
-  const k = conductor === 'Cu' ? 143 : 95; // For XLPE insulation
+  // ── Thermal equivalent current & cable withstand ───────────────────────────
+  const IthKA  = (Ik * Math.sqrt(faultDuration)) / 1000;
+  const k      = conductor === 'Cu' ? 143 : 95; // IEC 60364-5-54 Table 54.3, XLPE
   const minSize = (Ik * Math.sqrt(faultDuration)) / k;
+  const cablePasses = cableSize >= minSize;
+
+  const faultLabel: Record<string, string> = {
+    '3ph': '3-Phase Symmetrical',
+    DL:   'Line-to-Line (Double Line)',
+    SLG:  'Single Line-to-Ground',
+    EF:   'Earth Fault (Phase–PE)',
+  };
 
   const steps: CalculationStep[] = [
     {
       step: 1,
       description: 'System base impedance',
-      formula: `Z_base = U²_n / S_n = ${Vn}² / (${transformerMVA}×10⁶)`,
+      formula: `Z_base = Un² / S_n = ${Vn}² / (${transformerMVA}×10⁶)`,
       result: `${Zbase.toFixed(4)} Ω`,
     },
     {
       step: 2,
-      description: 'Transformer impedance (IEC 60909 Eq. 4)',
-      formula: `Z_T = (z_k% / 100) × Z_base = (${transformerImpedance}% / 100) × ${Zbase.toFixed(4)}`,
-      result: `${Zt.toFixed(4)} Ω`,
+      description: 'Transformer positive-sequence impedance (IEC 60909 §3.3.2)',
+      formula: `Z_T = (z_k%/100)×Z_base = (${transformerImpedance}/100)×${Zbase.toFixed(4)}  →  R_T = ${Rt.toFixed(5)} Ω, X_T = ${Xt.toFixed(5)} Ω`,
+      result: `|Z_T| = ${Zt.toFixed(5)} Ω`,
     },
     {
       step: 3,
-      description: 'Cable impedance at 20°C (IEC 60909, max fault)',
-      formula: `Z_c = R_c + jX_c = (${Rc.toFixed(4)}) + j(${Xc.toFixed(4)}) Ω`,
-      result: `|Z_c| = ${Math.sqrt(Rc ** 2 + Xc ** 2).toFixed(4)} Ω`,
+      description: 'Cable positive-sequence resistance at 20°C — R = 1000/(σ·S) Ω/km  (IEC 60909 §2.5)',
+      formula: `σ_${conductor} = ${sigma} S·m/mm²  →  R_c/km = 1000/(${sigma}×${cableSize}) = ${cableR_km.toFixed(4)} Ω/km  →  R_c = ${cableR_km.toFixed(4)}×${cableLength}/1000`,
+      result: `R_c = ${Rc.toFixed(5)} Ω,  X_c = ${Xc.toFixed(5)} Ω  (0.08 Ω/km)`,
     },
     {
       step: 4,
-      description: 'Total short-circuit impedance',
-      formula: `Z_k = √((R_T+R_c)² + (X_T+X_c)²) = √(${(Rt+Rc).toFixed(4)}² + ${(Xt2+Xc).toFixed(4)}²)`,
-      result: `${Ztotal.toFixed(4)} Ω`,
+      description: 'Total positive-sequence impedance',
+      formula: `Z_1 = √(R_1² + X_1²) = √((${R1.toFixed(5)})² + (${X1.toFixed(5)})²)`,
+      result: `Z_1 = ${Z1.toFixed(5)} Ω  (X/R = ${XR.toFixed(2)})`,
     },
     {
       step: 5,
-      description: `Initial symmetrical short-circuit current (${faultType})`,
-      formula: `I"_k = c × U_n / (√3 × Z_k) = ${c} × ${Vn} / (√3 × ${Ztotal.toFixed(4)})`,
-      result: `${IkKA.toFixed(3)} kA`,
+      description: faultStepDesc,
+      formula: faultFormula,
+      result: faultStepResult,
     },
     {
       step: 6,
       description: 'Peak current (IEC 60909 Eq. 52)',
-      formula: `κ = 1.02 + 0.98e^(-3/(X/R)) = ${kappa.toFixed(3)}, i_p = κ × √2 × I"_k`,
-      result: `${IpKA.toFixed(3)} kA (peak)`,
+      formula: `κ = 1.02 + 0.98·e^(-3/(X/R)) = 1.02 + 0.98·e^(-3/${XR.toFixed(2)}) = ${kappa.toFixed(3)};   i_p = κ·√2·I"k`,
+      result: `${IpKA.toFixed(3)} kA peak`,
     },
     {
       step: 7,
-      description: 'Cable thermal withstand check (IEC 60364-5-54)',
-      formula: `S_min = I_k × √t / k = ${(Ik/1000).toFixed(3)}k × √${faultDuration} / ${k}`,
-      result: `${minSize.toFixed(1)} mm² minimum — Selected: ${cableSize} mm² ${cableSize >= minSize ? '✓ PASS' : '✗ FAIL'}`,
+      description: 'Cable minimum thermal cross-section (IEC 60364-5-54 adiabatic, Table 54.3)',
+      formula: `S_min = I_k·√t / k = ${IkKA.toFixed(3)}k×√${faultDuration} / ${k}  [k=${k} A·s^0.5/mm² for ${conductor}/XLPE]`,
+      result: `${minSize.toFixed(1)} mm² min  →  ${cableSize} mm² selected: ${cableSize >= minSize ? '✓ PASS' : '✗ FAIL'}`,
     },
   ];
 
-  const cablePasses = cableSize >= minSize;
-
   return {
     values: [
-      { label: 'Fault Type', value: faultType === '3ph' ? '3-Phase Symmetrical' : faultType === 'SLG' ? 'Single Line-to-Ground' : faultType === 'DL' ? 'Double Line' : 'Earth Fault', unit: '' },
+      { label: 'Fault Type', value: faultLabel[faultType], unit: '' },
       { label: 'Symmetrical Fault Current (I"k)', value: IkKA.toFixed(3), unit: 'kA', highlight: true },
       { label: 'Peak Fault Current (ip)', value: IpKA.toFixed(3), unit: 'kA', highlight: true },
-      { label: 'Thermal Equivalent Current (Ith)', value: IthKA.toFixed(3), unit: 'kA' },
-      { label: 'Total Impedance (Zk)', value: Ztotal.toFixed(4), unit: 'Ω' },
+      { label: 'Thermal Equivalent (Ith)', value: IthKA.toFixed(3), unit: 'kA' },
+      { label: 'Positive-Seq Impedance Z1', value: Z1.toFixed(4), unit: 'Ω' },
+      { label: 'Zero-Seq Impedance Z0', value: Z0.toFixed(4), unit: 'Ω' },
+      { label: 'Cable Resistance at 20°C', value: cableR_km.toFixed(4), unit: 'Ω/km', highlight: true },
+      { label: 'PE Conductor Size (Spe)', value: Spe.toString(), unit: 'mm²' },
       { label: 'X/R Ratio', value: XR.toFixed(2), unit: '' },
-      { label: 'Peak Factor (κ)', value: kappa.toFixed(3), unit: '' },
+      { label: 'Peak Factor κ', value: kappa.toFixed(3), unit: '' },
       { label: 'Min Cable Thermal Withstand', value: minSize.toFixed(1), unit: 'mm²' },
-      { label: 'Cable Thermal Withstand', value: cablePasses ? 'PASS' : 'FAIL', unit: '', status: cablePasses ? 'PASS' : 'FAIL' },
+      { label: 'Cable Thermal Check', value: cablePasses ? 'PASS' : 'FAIL', unit: '', status: cablePasses ? 'PASS' : 'FAIL' },
     ],
     status: cablePasses ? 'PASS' : 'FAIL',
-    recommendation: `Fault current: ${IkKA.toFixed(3)} kA (symmetrical), ${IpKA.toFixed(3)} kA (peak). Minimum cable for thermal withstand: ${minSize.toFixed(1)} mm². Selected ${cableSize} mm² cable is ${cablePasses ? 'ADEQUATE' : 'UNDERSIZED — increase to ' + Math.ceil(minSize) + ' mm²'}.`,
-    formula: "I\"_k3 = c × U_n / (√3 × Z_k)",
+    recommendation: `${faultLabel[faultType]}: ${IkKA.toFixed(3)} kA symmetrical, ${IpKA.toFixed(3)} kA peak. Cable resistance: ${cableR_km.toFixed(4)} Ω/km (${conductor} at 20°C). Thermal withstand needs ≥${minSize.toFixed(1)} mm² — ${cableSize} mm² is ${cablePasses ? 'ADEQUATE' : 'UNDERSIZED — increase to ' + Math.ceil(minSize) + ' mm²'}.`,
+    formula: faultFormula,
     steps,
     standardRef: {
-      standard: 'IEC 60909',
-      clause: '4.2 — 4.3',
+      standard: 'IEC 60909-0',
+      clause: faultType === 'EF' ? 'IEC 60364-4-41 §411.4' : '4.2–4.3',
       table: 'Table 1 (voltage factor c)',
-      equation: "I\"_k3 = c × U_n / (√3 × Z_k)",
+      equation: faultFormula,
       title: 'Short-circuit currents in three-phase a.c. systems',
     },
   };
