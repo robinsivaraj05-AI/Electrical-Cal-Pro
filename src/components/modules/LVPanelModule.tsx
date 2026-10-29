@@ -2118,28 +2118,105 @@ function Drawings() {
         ? <EmptyState icon={BookOpen} title="No drawings" sub='Add drawings to build the register. Import drawing references without attaching fictitious files.' />
         : (
           <div>
-            {visible.map((d) => (
+            {visible.map((d) => {
+              const hasFile = !!d.fileDataUrl;
+              const isImage = hasFile && (d.fileDataUrl as string).startsWith('data:image');
+              const isPDF   = hasFile && (d.fileDataUrl as string).startsWith('data:application/pdf');
+              const isRefOnly = !!d.fileRef && !hasFile;
+
+              const viewFile = () => {
+                if (!d.fileDataUrl) return;
+                const win = window.open(); if (!win) return;
+                if (isImage) {
+                  win.document.write(`<html><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${d.fileDataUrl}" style="max-width:100%;max-height:100vh;object-fit:contain"></body></html>`);
+                } else {
+                  win.document.write(`<html><body style="margin:0"><embed src="${d.fileDataUrl}" width="100%" height="100%" style="position:fixed;inset:0"></body></html>`);
+                }
+              };
+
+              const downloadFile = () => {
+                if (!d.fileDataUrl) return;
+                const a = document.createElement('a');
+                a.href = d.fileDataUrl as string;
+                a.download = d.fileRef || d.drawingNo || 'drawing';
+                a.click();
+              };
+
+              return (
               <div key={d.id} style={{ ...card(), marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  <div style={{ flex: 1 }}>
+                  {/* Thumbnail for images */}
+                  {isImage && (
+                    <img src={d.fileDataUrl as string} alt={d.title} onClick={viewFile}
+                      style={{ width: 72, height: 54, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', flexShrink: 0, border: '1px solid var(--ec-border)' }} />
+                  )}
+                  {isPDF && (
+                    <div onClick={viewFile} style={{ width: 72, height: 54, background: '#EF444422', borderRadius: 6, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid #EF444444' }}>
+                      <span style={{ fontSize: 18 }}>📄</span>
+                      <span style={{ fontSize: 9, color: '#EF4444', fontWeight: 700 }}>PDF</span>
+                    </div>
+                  )}
+                  {hasFile && !isImage && !isPDF && (
+                    <div onClick={downloadFile} style={{ width: 72, height: 54, background: '#22C55E22', borderRadius: 6, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid #22C55E44' }}>
+                      <span style={{ fontSize: 18 }}>📊</span>
+                      <span style={{ fontSize: 9, color: '#22C55E', fontWeight: 700 }}>{d.fileRef?.split('.').pop()?.toUpperCase() || 'FILE'}</span>
+                    </div>
+                  )}
+                  {isRefOnly && (
+                    <div style={{ width: 72, height: 54, background: '#F59E0B22', borderRadius: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid #F59E0B44' }}>
+                      <span style={{ fontSize: 18 }}>🔗</span>
+                      <span style={{ fontSize: 8, color: '#F59E0B', fontWeight: 700, textAlign: 'center', lineHeight: 1.2 }}>REF ONLY</span>
+                    </div>
+                  )}
+                  {!d.fileRef && (
+                    <div style={{ width: 72, height: 54, background: 'var(--ec-bg-surface)', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px dashed var(--ec-border)' }}>
+                      <span style={{ fontSize: 20, opacity: 0.3 }}>📁</span>
+                    </div>
+                  )}
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 13, fontWeight: 700, color: ACCENT }}>{d.drawingNo}</span>
                       <StatusBadge status={d.status} />
                       <StatusBadge status={d.approvalStatus} />
                       {d.associatedPanel && <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>Panel: {d.associatedPanel}</span>}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--ec-text-primary)', marginBottom: 4 }}>{d.title}</div>
-                    <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--ec-text-muted)', flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ec-text-primary)', marginBottom: 4 }}>{d.title}</div>
+                    <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--ec-text-muted)', flexWrap: 'wrap', marginBottom: 4 }}>
                       <span>{d.category}</span><span>{d.discipline}</span>
                       <span>Rev: {d.revision}</span>{d.date && <span>{d.date}</span>}
-                      {d.fileRef ? <span style={{ color: '#22C55E' }}>📎 {d.fileRef}</span> : <span style={{ color: '#F59E0B' }}>No file attached</span>}
                     </div>
+                    {/* File status line */}
+                    {hasFile && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: '#22C55E', fontWeight: 600 }}>📎 {d.fileRef}</span>
+                        <button onClick={isImage || isPDF ? viewFile : downloadFile}
+                          style={{ ...btn(isPDF ? '#EF4444' : isImage ? '#8B5CF6' : '#22C55E', { padding: '3px 10px', fontSize: 10 }) }}>
+                          {isImage ? '🔍 View' : isPDF ? '📄 View PDF' : '📥 Download'}
+                        </button>
+                        <button onClick={downloadFile} style={{ ...btn('#475569', { padding: '3px 10px', fontSize: 10 }) }}>
+                          <Download style={{ width: 10, height: 10 }} /> Save
+                        </button>
+                      </div>
+                    )}
+                    {isRefOnly && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: '#F59E0B' }}>🔗 Reference: {d.fileRef}</span>
+                        <span style={{ fontSize: 10, color: 'var(--ec-text-muted)', background: 'var(--ec-bg-surface)', padding: '2px 8px', borderRadius: 4 }}>
+                          File not stored — attach to enable download
+                        </span>
+                        <button onClick={() => openEdit(d)} style={{ ...btn('#F59E0B', { padding: '3px 10px', fontSize: 10 }) }}>
+                          <Upload style={{ width: 10, height: 10 }} /> Attach File
+                        </button>
+                      </div>
+                    )}
+                    {!d.fileRef && (
+                      <span style={{ fontSize: 11, color: 'var(--ec-text-muted)' }}>No file attached — edit to upload</span>
+                    )}
                     {d.remarks && <div style={{ fontSize: 11, color: 'var(--ec-text-muted)', marginTop: 4 }}>{d.remarks}</div>}
                   </div>
+
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
-                    {d.fileDataUrl && (d.fileDataUrl as string).startsWith('data:') && (
-                      <a href={d.fileDataUrl as string} download={d.fileRef} style={{ ...btn('#8B5CF6', { padding: '5px 10px' }), textDecoration: 'none' }}><Download style={{ width: 11, height: 11 }} /></a>
-                    )}
                     <button onClick={() => setExpandedRev(expandedRev === d.id ? null : d.id)} style={btn('#475569', { padding: '5px 10px', fontSize: 11 })}>
                       History {(d.revisionHistory ?? []).length > 0 && `(${d.revisionHistory.length})`}
                     </button>
@@ -2190,7 +2267,8 @@ function Drawings() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
     </div>
