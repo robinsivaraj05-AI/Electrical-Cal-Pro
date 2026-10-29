@@ -841,7 +841,8 @@ export function TransformerDistribution() {
                   {feeders.map((f, i) => {
                     const c = feederCalcs[i];
                     const inLeIz = c.In <= c.Iz;
-                    const i2Check = c.In * 1.45 <= c.Iz;
+                    // IEC 60364-4-43: I₂ (= 1.45 × In) ≤ 1.45 × Iz
+                    const i2Check = c.In * 1.45 <= c.Iz * 1.45;
                     const status = inLeIz && i2Check ? 'PASS' : 'FAIL';
                     const bType = c.In <= 63 ? 'MCB' : c.In <= 1600 ? 'MCCB' : 'ACB';
                     return (
