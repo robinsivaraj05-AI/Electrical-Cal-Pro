@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload, Copy } from 'lucide-react';
+import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload, Copy, FolderOpen, Save, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -48,6 +48,20 @@ type Feeder = {
   ambientTemp: number;
   groupSize: number;
 };
+
+type DistSnapshot = {
+  id: string;
+  name: string;
+  savedAt: string;
+  xfmr: TransformerConfig;
+  feeders: Feeder[];
+};
+
+const DIST_KEY = 'elec-dist-projects';
+const loadSnaps = (): DistSnapshot[] => {
+  try { return JSON.parse(localStorage.getItem(DIST_KEY) ?? '[]'); } catch { return []; }
+};
+const saveSnaps = (snaps: DistSnapshot[]) => localStorage.setItem(DIST_KEY, JSON.stringify(snaps));
 
 // ─── Cable Tables ─────────────────────────────────────────────────────────────
 
@@ -253,6 +267,9 @@ export function TransformerDistribution() {
   const [isAdding, setIsAdding] = useState(false);
   const [newFeeder, setNewFeeder] = useState<Feeder>(defaultFeeder());
   const xlsxInputRef = useRef<HTMLInputElement>(null);
+  const [showProjects, setShowProjects] = useState(false);
+  const [snapName, setSnapName]         = useState('');
+  const [snaps, setSnaps]               = useState<DistSnapshot[]>(loadSnaps);
 
   // ── Transformer calcs ──
   const ratedCurrent = useMemo(() =>
@@ -440,6 +457,29 @@ export function TransformerDistribution() {
     e.target.value = '';
   };
 
+  // ── Project save / load ──
+  const saveProject = () => {
+    const name = snapName.trim() || `Design ${new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}`;
+    const snap: DistSnapshot = { id: crypto.randomUUID(), name, savedAt: new Date().toISOString(), xfmr, feeders };
+    const updated = [snap, ...snaps];
+    setSnaps(updated);
+    saveSnaps(updated);
+    setSnapName('');
+  };
+
+  const loadProject = (snap: DistSnapshot) => {
+    setXfmr(snap.xfmr);
+    setFeeders(snap.feeders);
+    setShowProjects(false);
+    setActiveTab('dashboard');
+  };
+
+  const deleteSnap = (id: string) => {
+    const updated = snaps.filter(s => s.id !== id);
+    setSnaps(updated);
+    saveSnaps(updated);
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
@@ -447,17 +487,104 @@ export function TransformerDistribution() {
   return (
     <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif", maxWidth: 1400, margin: '0 auto' }}>
 
+      {/* Project Manager Panel (slide-in from right) */}
+      {showProjects && (
+        <>
+          {/* backdrop */}
+          <div onClick={() => setShowProjects(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 999 }} />
+          <div style={{ position: 'fixed', top: 0, right: 0, width: 400, height: '100vh', background: 'var(--ec-bg-card)', zIndex: 1000, boxShadow: '-8px 0 40px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Panel header */}
+            <div style={{ padding: '20px 20px 16px', background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <FolderOpen style={{ width: 20, height: 20, color: '#fff' }} />
+                  <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>Distribution Design Projects</span>
+                </div>
+                <button onClick={() => setShowProjects(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', padding: '4px 8px' }}>
+                  <X style={{ width: 14, height: 14 }} />
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', marginTop: 6 }}>
+                {snaps.length} saved {snaps.length === 1 ? 'project' : 'projects'}
+              </div>
+            </div>
+
+            {/* Save current design */}
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--ec-border)', flexShrink: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Save Current Design</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={snapName}
+                  onChange={e => setSnapName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveProject()}
+                  placeholder={`e.g. Block-A MDB, ${new Date().getFullYear()}`}
+                  style={{ flex: 1, background: 'var(--ec-bg-input)', border: '1px solid var(--ec-border)', borderRadius: 8, padding: '8px 12px', color: 'var(--ec-text-primary)', fontSize: 12 }}
+                />
+                <button onClick={saveProject} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#4F46E5', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <Save style={{ width: 13, height: 13 }} /> Save
+                </button>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--ec-text-muted)', marginTop: 6 }}>
+                Saves: transformer config ({xfmr.kva} kVA) + {feeders.length} feeder{feeders.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+
+            {/* Project list */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px' }}>
+              {snaps.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--ec-text-muted)', fontSize: 13 }}>
+                  <FolderOpen style={{ width: 36, height: 36, marginBottom: 12, opacity: 0.4 }} />
+                  <div>No saved projects yet.</div>
+                  <div style={{ fontSize: 11, marginTop: 4 }}>Enter a name above and click Save.</div>
+                </div>
+              ) : snaps.map(snap => (
+                <div key={snap.id} style={{ background: 'var(--ec-bg-surface)', border: '1px solid var(--ec-border)', borderRadius: 10, padding: '14px 16px', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ec-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{snap.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--ec-text-muted)', marginTop: 4 }}>
+                        Saved {new Date(snap.savedAt).toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <span style={{ fontSize: 10, background: '#4F46E522', color: '#818CF8', borderRadius: 4, padding: '2px 7px', fontWeight: 600 }}>{snap.xfmr.kva} kVA</span>
+                        <span style={{ fontSize: 10, background: '#22C55E22', color: '#22C55E', borderRadius: 4, padding: '2px 7px', fontWeight: 600 }}>{snap.feeders.length} Feeders</span>
+                        <span style={{ fontSize: 10, background: '#3B82F622', color: '#3B82F6', borderRadius: 4, padding: '2px 7px', fontWeight: 600 }}>{snap.xfmr.secondaryV} V</span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => loadProject(snap)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#22C55E', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                        <RefreshCw style={{ width: 11, height: 11 }} /> Load
+                      </button>
+                      <button onClick={() => deleteSnap(snap.id)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: '#EF444422', color: '#EF4444', border: '1px solid #EF444433', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                        <Trash2 style={{ width: 11, height: 11 }} /> Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Header */}
       <div style={{ ...card(), marginBottom: 24, background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', border: 'none', display: 'flex', alignItems: 'center', gap: 18 }}>
         <div style={{ width: 52, height: 52, borderRadius: 14, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <LayoutDashboard style={{ width: 26, height: 26, color: '#fff' }} />
         </div>
-        <div>
+        <div style={{ flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 800, color: '#fff', letterSpacing: '-0.02em' }}>ELECTRICAL DISTRIBUTION DESIGN</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 3 }}>
             IEC 60076 · IEC 60364-5-52 · IEC 60364-4-43 · Transformer loading, cable sizing, breaker selection & PF correction
           </div>
         </div>
+        <button
+          onClick={() => setShowProjects(true)}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: 'rgba(255,255,255,0.18)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0, backdropFilter: 'blur(4px)' }}
+        >
+          <FolderOpen style={{ width: 15, height: 15 }} />
+          Projects {snaps.length > 0 && <span style={{ background: 'rgba(255,255,255,0.3)', borderRadius: 10, padding: '1px 6px', fontSize: 10 }}>{snaps.length}</span>}
+        </button>
       </div>
 
       {/* Tabs */}
