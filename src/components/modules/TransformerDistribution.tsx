@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { LayoutDashboard, Zap, Cable, Shield, Cpu, Battery, AlertTriangle, FileText, BookOpen, Plus, Trash2, Edit2, Check, X, Download, Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -249,6 +250,7 @@ export function TransformerDistribution() {
   const [editFeeder, setEditFeeder] = useState<Feeder | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [newFeeder, setNewFeeder] = useState<Feeder>(defaultFeeder());
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
 
   // ── Transformer calcs ──
   const ratedCurrent = useMemo(() =>
@@ -335,6 +337,93 @@ export function TransformerDistribution() {
     a.href = URL.createObjectURL(blob);
     a.download = 'feeder_schedule.csv';
     a.click();
+  };
+
+  // ── Excel Template Download ──
+  const downloadTemplate = () => {
+    const headers = [
+      'Feeder No', 'DB / Panel', 'Description', 'Quantity', 'Rated kW', 'Voltage (V)',
+      'Phases (1/3)', 'Power Factor', 'Efficiency', 'Load Type',
+      'Demand Factor', 'Diversity Factor', 'Utilization Factor',
+      'Starting Method', 'Starting Current Mult', 'Is Existing (yes/no)',
+      'Cable Length (m)', 'Conductor (Cu/Al)', 'Insulation (PVC/XLPE)',
+      'Multicore (yes/no)', 'Armoured (yes/no)', 'Install Method',
+      'Num Runs', 'Ambient Temp (°C)', 'Group Size',
+    ];
+    const sample = [
+      'F01', 'MDB', 'Air Handling Unit', 1, 22, 415,
+      3, 0.85, 0.95, 'motor',
+      0.8, 1.0, 0.85,
+      'Star-Delta', 6, 'no',
+      50, 'Cu', 'XLPE',
+      'yes', 'no', 'Tray',
+      1, 35, 1,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+    ws['!cols'] = headers.map(() => ({ wch: 20 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Feeders');
+    XLSX.writeFile(wb, 'feeder_template.xlsx');
+  };
+
+  // ── Excel Import ──
+  const importFromExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const data = ev.target?.result;
+      if (!data) return;
+      const wb = XLSX.read(data, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+      const parsed: Feeder[] = rows.map((row) => {
+        const str  = (k: string) => String(row[k] ?? '').trim();
+        const num  = (k: string, def: number) => { const v = parseFloat(str(k)); return isNaN(v) ? def : v; };
+        const bool = (k: string) => /^yes$/i.test(str(k));
+        const phases = parseInt(str('Phases (1/3)')) === 1 ? 1 : 3;
+        const loadTypeRaw = str('Load Type').toLowerCase();
+        const validLoad = ['motor','heater','lighting','HVAC','UPS','socket','VFD','other'];
+        const loadType = (validLoad.includes(loadTypeRaw) ? loadTypeRaw : 'other') as Feeder['loadType'];
+        const conductorRaw = str('Conductor (Cu/Al)').toUpperCase();
+        const conductor: 'Cu' | 'Al' = conductorRaw === 'Al' ? 'Al' : 'Cu';
+        const insulationRaw = str('Insulation (PVC/XLPE)').toUpperCase();
+        const insulation: 'PVC' | 'XLPE' = insulationRaw === 'PVC' ? 'PVC' : 'XLPE';
+        return {
+          id: crypto.randomUUID(),
+          feederNo:           str('Feeder No'),
+          dbName:             str('DB / Panel'),
+          description:        str('Description'),
+          quantity:           num('Quantity', 1),
+          ratedKW:            num('Rated kW', 1),
+          voltage:            num('Voltage (V)', 415),
+          phases,
+          powerFactor:        Math.min(1, Math.max(0.5, num('Power Factor', 0.85))),
+          efficiency:         Math.min(1, Math.max(0.5, num('Efficiency', 0.95))),
+          loadType,
+          demandFactor:       Math.min(1, Math.max(0.1, num('Demand Factor', 0.8))),
+          diversityFactor:    Math.min(1, Math.max(0.1, num('Diversity Factor', 1.0))),
+          utilizationFactor:  Math.min(1, Math.max(0.1, num('Utilization Factor', 0.85))),
+          startingMethod:     str('Starting Method') || 'Direct-on-line',
+          startingCurrentMult: num('Starting Current Mult', 6),
+          isExisting:         bool('Is Existing (yes/no)'),
+          cableLength:        Math.max(1, num('Cable Length (m)', 10)),
+          conductor,
+          insulation,
+          multicore:          bool('Multicore (yes/no)'),
+          armoured:           bool('Armoured (yes/no)'),
+          installMethod:      str('Install Method') || 'Tray',
+          numRuns:            Math.max(1, num('Num Runs', 1)),
+          ambientTemp:        num('Ambient Temp (°C)', 35),
+          groupSize:          Math.max(1, num('Group Size', 1)),
+        };
+      });
+      if (parsed.length > 0) {
+        setFeeders(prev => [...prev, ...parsed]);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -530,12 +619,35 @@ export function TransformerDistribution() {
           <div style={card({ marginBottom: 16 })}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isAdding ? 16 : 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>Feeder List ({feeders.length})</div>
-              <button
-                onClick={() => { setIsAdding(!isAdding); setNewFeeder(defaultFeeder()); }}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#3B82F6', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-              >
-                <Plus style={{ width: 14, height: 14 }} /> Add Feeder
-              </button>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={downloadTemplate}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'var(--ec-bg-surface)', color: 'var(--ec-text-primary)', border: '1px solid var(--ec-border)', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                  title="Download Excel template with all column headers and a sample row"
+                >
+                  <Download style={{ width: 14, height: 14 }} /> Download Template
+                </button>
+                <button
+                  onClick={() => xlsxInputRef.current?.click()}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#22C55E22', color: '#22C55E', border: '1px solid #22C55E55', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                  title="Import feeders from a filled Excel template"
+                >
+                  <Upload style={{ width: 14, height: 14 }} /> Import Excel
+                </button>
+                <input
+                  ref={xlsxInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  style={{ display: 'none' }}
+                  onChange={importFromExcel}
+                />
+                <button
+                  onClick={() => { setIsAdding(!isAdding); setNewFeeder(defaultFeeder()); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#3B82F6', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <Plus style={{ width: 14, height: 14 }} /> Add Feeder
+                </button>
+              </div>
             </div>
 
             {isAdding && (
